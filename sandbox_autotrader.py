@@ -119,25 +119,34 @@ def get_account(api, ref):
     return str(found[0]["id"])
 
 def find_share(api, ticker):
-    resp = api.call("find", {"query": ticker, "instrumentKind": "INSTRUMENT_TYPE_SHARE", "apiTradeAvailableFlag": True})
-    matches = [i for i in resp.get("instruments", [])
-               if str(i.get("ticker", "")).upper() == ticker
-               and str(i.get("classCode", "")).upper() == "TQBR"
-               and str(i.get("currency", "rub")).lower() == "rub"
-               and i.get("uid")]
-    if not matches:
-        raise c.APIError(f"{ticker}: акция TQBR не найдена")
-    if len(matches) > 1:
-        raise c.APIError(f"{ticker}: неоднозначная акция")
-    uid = matches[0]["uid"]
-    detailed = api.call("instrument", {"idType":"INSTRUMENT_ID_TYPE_UID", "id":uid}).get("instrument", {})
+    """Resolve a specific Moscow Exchange common share by ticker + board.
+
+    Never pick an arbitrary UID from FindInstrument's repeated ticker results.
+    """
+    ticker = str(ticker).strip().upper()
+    if ticker not in TRADABLE:
+        raise c.APIError(f"{ticker}: инструмент не входит в разрешённую торговую вселенную")
+    detailed = api.call("instrument", {
+        "idType": "INSTRUMENT_ID_TYPE_TICKER",
+        "classCode": "TQBR",
+        "id": ticker,
+    }).get("instrument") or {}
+    if (str(detailed.get("ticker", "")).upper() != ticker
+            or str(detailed.get("classCode", "")).upper() != "TQBR"):
+        raise c.APIError(f"{ticker}: API не подтвердил тикер и торговую доску TQBR")
+    uid = detailed.get("uid")
+    if not uid:
+        raise c.APIError(f"{ticker}: не получен UID")
     if int(detailed.get("lot") or 0) < 1 or not detailed.get("apiTradeAvailableFlag", False):
         raise c.APIError(f"{ticker}: нет разрешения торговли через API")
-    if detailed.get("instrumentType", "share").lower() not in ("share","shares"):
-        raise c.APIError(f"{ticker}: не является акцией")
+    kind = str(detailed.get("instrumentType", "")).lower()
+    if kind not in ("share", "shares", "instrument_type_share"):
+        raise c.APIError(f"{ticker}: инструмент не подтверждён как акция")
     if str(detailed.get("currency", "")).lower() != "rub":
         raise c.APIError(f"{ticker}: неподходящая валюта")
-    return {"ticker": ticker, "uid": uid, "lot": int(detailed["lot"]), "name": detailed.get("name", ticker)}
+    return {"ticker": ticker, "uid": uid, "lot": int(detailed["lot"]),
+            "name": detailed.get("name", ticker)}
+
 
 def exchange_open(api, uid):
     r=api.call("trader_status", {"instrumentId": uid})
