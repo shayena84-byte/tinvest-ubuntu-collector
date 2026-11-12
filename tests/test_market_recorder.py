@@ -78,13 +78,108 @@ class TestMarketRecorder(unittest.TestCase):
             self.assertEqual(first,again)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0],1)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM book_levels").fetchone()[0],4)
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],1)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],2)
             self.assertEqual(self.dbpath.stat().st_mode & 0o777,0o600)
             levels=db.execute("SELECT side,level,price,lots FROM book_levels WHERE snapshot_id=? "
                               "ORDER BY side,level",(first,)).fetchall()
             self.assertEqual(len(levels),4)
         finally:
             db.close()
+
+    def test_rest_orderbook_ts_is_read_and_validated(self):
+        book = {**self.book, "orderbookTs":"2026-11-12T11:55:00Z"}
+        book.pop("time", None)
+        out=m.normalize_payload(self.inst,self.last,book,10,self.now)
+        self.assertEqual(out["book_stale_seconds"],90)
+        self.assertEqual(out["quality_status"],"valid")
+        self.assertEqual(out["quality_reason"],"ok")
+
+    def test_crossed_book_is_invalid_and_anomaly_persisted(self):
+        book={**self.book,"orderbookTs":"2026-11-12T11:55:00Z",
+              "bids":[{"price":{"units":"46","nano":0},"quantity":9}]}
+        out=m.normalize_payload(self.inst,self.last,book,10,self.now)
+        self.assertEqual(out["quality_status"],"invalid")
+        self.assertEqual(out["quality_reason"],"crossed_or_locked_book")
+        db=m.connect(self.dbpath)
+        try:
+            sid=m.store_snapshot(db,self.inst,out,self.now)
+            item=db.execute("SELECT status,reason FROM anomalies WHERE snapshot_id=?",
+                            (sid,)).fetchone()
+            self.assertEqual(tuple(item),("invalid","crossed_or_locked_book"))
+            self.assertEqual(db.execute("SELECT quality_status FROM snapshots").fetchone()[0],"invalid")
+        finally: db.close()
+
+    def test_missing_book_time_is_unverified(self):
+        no_time={k:v for k,v in self.book.items() if k!="time"}
+        out=m.normalize_payload(self.inst,self.last,no_time,10,self.now)
+        self.assertEqual(out["quality_status"],"unverified")
+        self.assertEqual(out["quality_reason"],"orderbook_timestamp_missing")
+
+    def test_stale_and_future_orderbook(self):
+        for ts,quality in [
+            ("2026-11-12T11:30:00Z","stale"),
+            ("2026-11-12T12:10:00Z","unverified")
+        ]:
+            book={**self.book,"orderbookTs":ts}
+            out=m.normalize_payload(self.inst,self.last,book,10,self.now)
+            self.assertEqual(out["quality_status"],quality)
+
+    def test_legacy_v1_migration_preserves_snapshots(self):
+        # Simulate original v1 DB (before new quality columns).
+        import market_recorder as rec
+        db=sqlite3.connect(self.dbpath)
+        db.execute("PRAGMA foreign_keys=ON")
+        db.executescript("""
+           CREATE TABLE instruments(uid TEXT PRIMARY KEY, ticker TEXT NOT NULL,
+              isin TEXT NOT NULL, board TEXT NOT NULL, name TEXT NOT NULL,
+              kind TEXT NOT NULL, currency TEXT, first_seen_utc TEXT NOT NULL,
+              last_seen_utc TEXT NOT NULL, UNIQUE(uid,board));
+           CREATE TABLE snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,
+              uid TEXT NOT NULL REFERENCES instruments(uid),
+              slot_utc TEXT NOT NULL, collected_utc TEXT NOT NULL,
+              last_price TEXT,last_trade_utc TEXT,book_time_utc TEXT,best_bid TEXT,
+              best_ask TEXT, spread_pct REAL, bid_top_lots INTEGER DEFAULT 0,
+              ask_top_lots INTEGER DEFAULT 0,bids_total INTEGER DEFAULT 0,
+              asks_total INTEGER DEFAULT 0, book_stale_seconds INTEGER,
+              last_stale_seconds INTEGER, UNIQUE(uid,slot_utc));
+           CREATE TABLE book_levels(snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+              side TEXT NOT NULL, level INTEGER NOT NULL, price TEXT NOT NULL,
+              lots INTEGER NOT NULL,PRIMARY KEY(snapshot_id,side,level));
+           CREATE TABLE fetch_errors(symbol TEXT NOT NULL,board TEXT NOT NULL,
+              slot_utc TEXT NOT NULL,collected_utc TEXT NOT NULL,
+              error_type TEXT NOT NULL,safe_message TEXT NOT NULL,
+              PRIMARY KEY(symbol,board,slot_utc));
+           PRAGMA user_version=1;
+        """)
+        dt="2026-11-12T11:55:00+00:00"
+        with db:
+            db.execute("INSERT INTO instruments VALUES(?,?,?,?,?,?,?,?,?)",
+                       ("uid","SBER","RU0009029540","TQBR","Sber","share","rub",dt,dt))
+            db.execute("""INSERT INTO snapshots(uid,slot_utc,collected_utc,
+               best_bid,best_ask) VALUES(?,?,?,?,?)""",
+               ("uid",dt,dt,"299.78","299.63"))
+        db.close()
+        migrated=rec.connect(self.dbpath)
+        try:
+            self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0],2)
+            self.assertEqual(migrated.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0],1)
+            self.assertEqual(migrated.execute("SELECT quality_status FROM snapshots").fetchone()[0],"invalid")
+            self.assertEqual(migrated.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0],1)
+        finally:
+            migrated.close()
+
+    def test_repeated_snapshot_replaces_old_anomaly(self):
+        db=m.connect(self.dbpath)
+        try:
+            first=m.normalize_payload(self.inst,self.last,
+                     {**self.book,"bids":[{"price":{"units":"46","nano":0},"quantity":1}]},
+                     10,self.now)
+            m.store_snapshot(db,self.inst,first,self.now)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0],1)
+            second=m.normalize_payload(self.inst,self.last,self.book,10,self.now)
+            m.store_snapshot(db,self.inst,second,self.now)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0],0)
+        finally: db.close()
 
     def test_failed_collection_preserves_valid_snapshots(self):
         db=m.connect(self.dbpath)
