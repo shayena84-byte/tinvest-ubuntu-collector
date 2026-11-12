@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.3.2
+# T-Invest Ubuntu Collector v1.3.3
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -213,6 +213,28 @@ systemctl --user enable --now tinvest-sandbox-ai.timer
 ```
 
 При `HTTP 403` **не включайте** таймер: он лишь будет повторять неуспешный вызов и не сможет торговать.
+
+## v1.3.3 — исправление неоднозначных UID для акций
+
+Если команда `sandbox.py quote SBER` выводила несколько одинаковых тикеров SBER с разными UID, обновите клиент. Вместо выбора по первому совпадению теперь для акций используется точная связка **ticker + classCode=TQBR** через `GetInstrumentBy`. Точно такой же поиск использует Sandbox AI Trader. Если API возвращает неправильную доску или не подтверждает инструмент, программа останавливается без сделки.
+
+Обновление:
+
+```bash
+cd ~
+wget -O tinvest_ubuntu_collector_v1.3.3.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.3/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.3.3.zip
+cd tinvest_ubuntu_collector
+bash install_ai_agent.sh
+```
+
+Проверка котировок (без торговых заявок):
+
+```bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" python3 ~/tinvest-collector/sandbox.py quote SBER
+```
+
+В `quote` для указанной акции больше не должно быть списка из нескольких UID. Автоторговля не включается этим обновлением. Региональное ограничение OpenAI API остаётся отдельным вопросом; прокси не изменяет правила доступности API.
 
 ## Ограничения
 
