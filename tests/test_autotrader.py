@@ -39,7 +39,7 @@ class TestSandboxTrader(unittest.TestCase):
         self.assertEqual(t.rub_cash({"money":[{"currency":"rub","units":"1000","nano":0},{"currency":"usd","units":"50","nano":0}]}),Decimal("1000"))
 
     def test_market_order_hard_guard(self):
-        prod=t.c.API("FAKE",base="https://invest-public-api.tbank.ru/rest/test")
+        prod=t.s._OriginalAPI("FAKE",base="https://invest-public-api.tbank.ru/rest/test")
         with self.assertRaises(t.c.APIError):
             t.post_order(prod,"secretacc",{"ticker":"SBER","uid":"fake"},
                          "BUY",1,Decimal("300"),"test",{},datetime.now(timezone.utc))
