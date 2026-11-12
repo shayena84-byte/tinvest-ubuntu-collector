@@ -16,6 +16,29 @@ class TestSandboxTrader(unittest.TestCase):
         self.assertEqual(t.c.METHODS["trader_orders"],"SandboxService/GetSandboxOrders")
         self.assertIn("sandbox-invest-public-api.tbank.ru",t.s.SANDBOX_BASE)
 
+    def test_find_share_uses_exact_ticker_board_uid(self):
+        class Fake:
+            def call(self,method,body):
+                self.method,self.body=method,body
+                return {"instrument":{"ticker":"SBER","classCode":"TQBR",
+                            "uid":"correct","lot":10,"currency":"rub",
+                            "instrumentType":"share","apiTradeAvailableFlag":True}}
+        api=Fake()
+        out=t.find_share(api,"SBER")
+        self.assertEqual(out["uid"],"correct")
+        self.assertEqual(out["lot"],10)
+        self.assertEqual(api.body["classCode"],"TQBR")
+        self.assertEqual(api.body["idType"],"INSTRUMENT_ID_TYPE_TICKER")
+
+    def test_find_share_fails_closed_on_wrong_board(self):
+        class Fake:
+            def call(self,method,body):
+                return {"instrument":{"ticker":"SBER","classCode":"SPBRU",
+                            "uid":"wrong","lot":10,"currency":"rub",
+                            "instrumentType":"share","apiTradeAvailableFlag":True}}
+        with self.assertRaises(t.c.APIError):
+            t.find_share(Fake(),"SBER")
+
     def test_trading_hours(self):
         # Mon 2026-11-09 09:00 Moscow = 06:00 UTC
         self.assertFalse(t.market_hours(datetime(2026,11,9,6,0,tzinfo=timezone.utc)))
