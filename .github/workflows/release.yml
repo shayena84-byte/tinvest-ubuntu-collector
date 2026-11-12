@@ -1,0 +1,40 @@
+name: Test and publish v1.0 archive
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run offline tests
+        run: |
+          python3 -m py_compile collector.py
+          python3 -m unittest discover -s tests -v
+
+      - name: Build installer ZIP
+        run: |
+          mkdir -p /tmp/tinvest_ubuntu_collector
+          cp collector.py install.sh README.md /tmp/tinvest_ubuntu_collector/
+          cp -r tests /tmp/tinvest_ubuntu_collector/
+          cd /tmp
+          zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v1.0 >/dev/null 2>&1; then
+            gh release upload v1.0 tinvest_ubuntu_collector.zip --clobber
+          else
+            gh release create v1.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.0" --notes "Read-only Ubuntu collector: source, installer and offline unit tests. Requires a read-only T-Invest API token."
+          fi
