@@ -1,0 +1,37 @@
+name: Collect public MOEX quotes
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/public-quotes.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "10 7,10,13,16 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-moex-quotes
+  cancel-in-progress: false
+
+jobs:
+  quotes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Fetch token-free MOEX market data
+        run: python3 public_quotes.py
+
+      - name: Commit public quotes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public-quotes/latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update public MOEX quotes"
+            git push
+          fi
