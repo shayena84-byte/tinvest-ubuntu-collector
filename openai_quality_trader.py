@@ -18,6 +18,7 @@ import sys
 import ai_sandbox_agent as ai
 import ollama_sandbox_agent as shared  # reusable risk/quality/equity routines; NO Ollama calls
 import sandbox_autotrader as t
+import trading_session as session
 
 c = t.c
 MAX_TRADE_FRACTION = 0.35
@@ -74,10 +75,9 @@ def _quality(cfg, context, now):
 def one_cycle(dry_run=False):
     now = datetime.now(timezone.utc)
     cfg = config()
-    if not t.market_hours(now):
-        ai.log("openai_market_closed", dry_run=dry_run)
-        return 0
-
+    # Trading availability is a per-instrument live broker status, not a
+    # Moscow-time window. This deliberately supports any verified evening or
+    # special session while remaining fail-closed on weekends and holidays.
     if c.TOKEN_PATH.name != "sandbox-token":
         raise c.APIError("Production token rejected: Sandbox only")
     old_cfg = t.config()
@@ -86,6 +86,15 @@ def one_cycle(dry_run=False):
         raise c.APIError("Не настроен виртуальный Sandbox-счёт")
     key = ai.read_key()  # existing private file; never echoed or sent to T-Invest
     api = t.s.SandboxAPI(c.token_read())
+    open_symbols, market_checks = session.open_watchlist(api, cfg["watchlist"])
+    ai.log("openai_trading_status", checks=market_checks, dry_run=dry_run)
+    if not open_symbols:
+        ai.log("openai_market_closed", reason="no_verified_open_instruments",
+               dry_run=dry_run)
+        return 0
+    # Restrict both the technical-data builder and model to currently open
+    # instruments. Its own exchange_open() remains a second independent check.
+    cfg["watchlist"] = open_symbols
     account_id = t.get_account(api, account_ref)
     st = ai.init_ai_state(t.load_json(t.STATE_FILE, {}), now)
 
@@ -149,6 +158,13 @@ def one_cycle(dry_run=False):
         ai.log("openai_order_race_abort")
         return 0
     instrument = trade["instrument"]
+    # The market may have entered an auction/break/closed between model
+    # response and trade execution. Re-read the trading status by exact UID.
+    is_open, current_reason = session.instrument_open(api, instrument["uid"])
+    if not is_open:
+        ai.log("openai_market_changed_abort", symbol=trade["symbol"],
+               reason=current_reason)
+        return 0
     held = t.held_lots(new_port, instrument["uid"], instrument["lot"])
     if trade["action"] == "BUY" and (held > 0 or new_cash < cash*Decimal(".97")):
         ai.log("openai_buy_state_changed_abort")
@@ -157,6 +173,13 @@ def one_cycle(dry_run=False):
         ai.log("openai_sell_position_changed_abort")
         return 0
     _quality(cfg, {"tradable": [instrument]}, datetime.now(timezone.utc))
+    # Check once more after the quality filter. A status-query failure is
+    # fatal and leaves any virtual order unsent.
+    is_open, current_reason = session.instrument_open(api, instrument["uid"])
+    if not is_open:
+        ai.log("openai_market_changed_abort", symbol=trade["symbol"],
+               reason=current_reason)
+        return 0
 
     # Independent final order size check. Recalculate affordability from new cash.
     price = Decimal(instrument["price_rub"])
