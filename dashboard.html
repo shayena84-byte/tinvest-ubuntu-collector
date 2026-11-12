@@ -113,6 +113,33 @@ footer{color:#748ba0;font-size:12px;line-height:1.7;margin-top:20px;border-top:1
   <div class="legend"><span><i style="background:var(--teal)"></i>Спрос</span><span><i style="background:var(--red)"></i>Предложение</span></div>
 </section>
 </div>
+<div class="section-head"><h2>Стакан и моделирование исполнения</h2><p>Срез последнего сохранённого стакана, оценка по доступным уровням</p></div>
+<div class="split">
+  <section class="panel">
+    <h2>Глубина спроса и предложения · 10 уровней</h2>
+    <p class="desc" id="depth-stamp">Загрузка уровней из SQLite…</p>
+    <div class="split" style="gap:12px">
+      <div class="table-wrap"><table><thead><tr><th>Покупка Bid</th><th>Лоты</th><th>Доля</th></tr></thead><tbody id="depth-bids"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Продажа Ask</th><th>Лоты</th><th>Доля</th></tr></thead><tbody id="depth-asks"></tbody></table></div>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Расчёт цены исполнения по стакану</h2>
+    <p class="desc">Ориентировочная средневзвешенная котировка, не сумма в рублях и не прогноз исполнения</p>
+    <label for="lots" style="color:var(--muted)">Количество лотов</label>
+    <select id="lots" style="margin-left:10px"><option value="1">1</option><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option></select>
+    <div class="cards" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:18px">
+      <div class="card"><span class="label">Продажа по Bid</span><strong id="sell-est">—</strong><small id="sell-fill">—</small></div>
+      <div class="card"><span class="label">Покупка по Ask</span><strong id="buy-est">—</strong><small id="buy-fill">—</small></div>
+    </div>
+    <p id="fill-warning" class="note">Симуляция доступна только по актуальному непересечённому стакану.</p>
+  </section>
+</div>
+<section class="panel">
+  <h2>Дисбаланс спроса / предложения</h2>
+  <p class="desc">Показатель (Bid − Ask) / (Bid + Ask) для первых 10 уровней. Значение ближе к −1 означает преобладание предложений, ближе к +1 — спроса. Не является доказательством будущего движения цены.</p>
+  <div class="chart" id="imbalance-chart"></div>
+</section>
 <div class="section-head"><h2>Контроль качества</h2><p id="quality-sub">Итоги выбранного периода</p></div>
 <div class="panel">
   <div class="quality">
@@ -132,6 +159,7 @@ footer{color:#748ba0;font-size:12px;line-height:1.7;margin-top:20px;border-top:1
   </section>
   <section class="panel">
     <h2>Журнал аномалий</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:9px 0"><select id="anomaly-filter" aria-label="Фильтр аномалий"><option value="all">Все статусы</option><option value="invalid">Некорректные</option><option value="stale">Устаревшие</option><option value="unverified">Не подтверждены</option></select><select id="anomaly-instrument" aria-label="Фильтр инструмента"><option value="all">Все инструменты</option></select></div>
     <p class="desc">Неисправные, устаревшие и неподтверждённые стаканы, зафиксированные в БД</p>
     <div class="table-wrap">
       <table><thead><tr><th>Время (МСК)</th><th>Инструмент</th><th>Причина</th><th>Статус</th></tr></thead><tbody id="anomaly-body"></tbody></table>
