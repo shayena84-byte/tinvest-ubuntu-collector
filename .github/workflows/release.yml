@@ -1,4 +1,4 @@
-name: Test and publish v1.2 archive
+name: Test and publish v1.3 archive
 on:
   push:
     branches: [main]
@@ -18,13 +18,13 @@ jobs:
 
       - name: Run offline tests
         run: |
-          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py
+          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py
           python3 -m unittest discover -s tests -v
 
       - name: Build installer ZIP
         run: |
           mkdir -p /tmp/tinvest_ubuntu_collector
-          cp collector.py sandbox.py sandbox_autotrader.py install.sh install_autotrader.sh README.md /tmp/tinvest_ubuntu_collector/
+          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py install.sh install_autotrader.sh install_ai_agent.sh README.md /tmp/tinvest_ubuntu_collector/
           cp -r tests /tmp/tinvest_ubuntu_collector/
           cd /tmp
           zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
@@ -33,8 +33,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.2 >/dev/null 2>&1; then
-            gh release upload v1.2 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.3 >/dev/null 2>&1; then
+            gh release upload v1.3 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.2 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.2" --notes "Autonomous 5-minute equity strategy for T-Invest Sandbox, user systemd timer, offline tests, no production trading."
+            gh release create v1.3 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.3" --notes "AI model decision agent for T-Invest Sandbox, 5-minute user timer, strict risk checks, no production trading."
           fi
