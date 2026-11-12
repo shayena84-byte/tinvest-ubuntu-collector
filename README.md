@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.3.3
+# T-Invest Ubuntu Collector v1.3.4
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -235,6 +235,41 @@ SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" proxychains4 -f "$H
 ```
 
 В `quote` для указанной акции больше не должно быть списка из нескольких UID. Автоторговля не включается этим обновлением. Региональное ограничение OpenAI API остаётся отдельным вопросом; прокси не изменяет правила доступности API.
+
+## v1.3.4 — выбор облигации по ISIN + режим торгов
+
+Т-Банк возвращает для одного ISIN несколько UID для разных торговых режимов. Для **Омега БО-01** (\`RU000A1092T7\`) доступны, среди прочего, OCBR, PTOB и TQCB. По умолчанию для облигации по 12-символьному ISIN сборщик ищет **только TQCB**, сверяет UID/ISIN/classCode через \`GetInstrumentBy\` и только затем запрашивает котировки. Ничего не угадывает и не выставляет заявок.
+
+Проверка после обновления:
+
+~~~bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" \
+proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" \
+python3 ~/tinvest-collector/sandbox.py quote RU000A1092T7
+~~~
+
+Для явного выбора режима:
+
+~~~bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" \
+proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" \
+python3 ~/tinvest-collector/sandbox.py quote RU000A1092T7 --board TQCB
+~~~
+
+Если в другом инструменте нужен альтернативный режим, укажите его через \`--board\`; без проверки соответствия инструмент не выбирается. Значение TQCB подтверждается списком режимов, полученным из Sandbox для этого выпуска.
+
+**Обновление (не включает AI-таймер):**
+
+~~~bash
+systemctl --user disable --now tinvest-sandbox-ai.timer
+cd ~
+wget -O tinvest_ubuntu_collector_v1.3.4.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.4/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.3.4.zip
+cd tinvest_ubuntu_collector
+bash install_ai_agent.sh
+~~~
+
+Ограничение: доступность биржевых данных в Sandbox проверяется на вашем сервере; автоматические тесты эмулируют ответы API. Реальные покупки по-прежнему запрещены кодом. Региональное ограничение OpenAI API остаётся отдельным вопросом.
 
 ## Ограничения
 
