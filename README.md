@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.4.0
+# T-Invest Ubuntu Collector v1.5.0
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -298,6 +298,27 @@ python3 ~/tinvest-collector/market_recorder.py export --hours 168
 ~~~
 
 Подробная инструкция, схема SQLite, правила точности и расширение инструментов — [MARKET_RECORDER.md](MARKET_RECORDER.md).
+
+## v1.5.0 — проверка качества котировок и локальный веб-дашборд
+
+Исправлено чтение временной метки REST стакана из **orderbookTs**. Добавлены статусы valid/stale/unverified/invalid, учёт пересечённых книг (Bid >= Ask), отдельная таблица аномалий, миграция существующей SQLite-базы v1 с сохранением истории, диаграммы цен, bid/ask, спредов и глубины стакана.
+
+**Установка поверх v1.4.0:**
+
+~~~bash
+cd ~
+wget -O tinvest_ubuntu_collector_v1.5.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.5.0/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.5.0.zip
+cd tinvest_ubuntu_collector
+bash install_market_quality.sh
+sudo loginctl enable-linger "$(whoami)"
+~~~
+
+Установщик сохраняет локальную резервную копию SQLite, делает миграцию базы и запускает безопасную localhost-панель по адресу http://127.0.0.1:8787. Для Windows используйте SSH-туннель к Ubuntu: ssh -L 8787:127.0.0.1:8787 user@IP_UBUNTU.
+
+**Полная инструкция:** [MARKET_QUALITY_DASHBOARD.md](MARKET_QUALITY_DASHBOARD.md).
+
+Сбор рыночных данных остаётся только на чтение, через существующий SOCKS5. Никаких торговых команд и передачи API-токена через панель. Все торговые таймеры остаются выключенными.
 
 ## Ограничения
 
