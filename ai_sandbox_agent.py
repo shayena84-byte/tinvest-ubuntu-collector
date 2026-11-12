@@ -198,9 +198,10 @@ def diagnose_api():
     try:
         with urlopen(req, timeout=25) as resp:
             body = json.load(resp)
-        print("OpenAI API: HTTP 200, model accessible =", body.get("id") == model)
+        accessible = body.get("id") == model
+        print("OpenAI API: HTTP 200, model accessible =", accessible)
         print("Запрос не создаёт торговых заявок или генераций модели.")
-        return 0
+        return 0 if accessible else 1
     except HTTPError as exc:
         print("OpenAI API:", safe_api_error(exc))
         print("HTTP 403 требует проверки кода ошибки, прав API-проекта и региона сервера.")
