@@ -164,6 +164,52 @@ def decode_response(raw):
         raise c.APIError("Некорректный торговый горизонт")
     return obj
 
+def safe_api_error(exc):
+    """Extract only the safe error.type / error.code fields from OpenAI error JSON."""
+    import re
+    status = getattr(exc, "code", "?")
+    result = f"HTTP {status}"
+    try:
+        parsed = json.loads(exc.read(4096).decode("utf-8", "replace"))
+        if not isinstance(parsed, dict):
+            return result
+        err = parsed.get("error") or {}
+        if not isinstance(err, dict):
+            return result
+        fields = []
+        for name in ("type", "code"):
+            value = err.get(name)
+            if isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9_.-]{1,96}", value):
+                fields.append(f"{name}={value}")
+        if fields:
+            result += " [" + ", ".join(fields) + "]"
+    except (ValueError, UnicodeError, TypeError, OSError):
+        pass
+    return result
+
+
+def diagnose_api():
+    """Read-only GET /v1/models/{model}; does not create a completion or order."""
+    from urllib.parse import quote
+    model = ai_config()["model"]
+    key = read_key()
+    url = "https://api.openai.com/v1/models/" + quote(model, safe="")
+    req = Request(url, headers={"Authorization": "Bearer " + key}, method="GET")
+    try:
+        with urlopen(req, timeout=25) as resp:
+            body = json.load(resp)
+        print("OpenAI API: HTTP 200, model accessible =", body.get("id") == model)
+        print("Запрос не создаёт торговых заявок или генераций модели.")
+        return 0
+    except HTTPError as exc:
+        print("OpenAI API:", safe_api_error(exc))
+        print("HTTP 403 требует проверки кода ошибки, прав API-проекта и региона сервера.")
+        return 1
+    except (URLError, TimeoutError) as exc:
+        print("OpenAI API: network/TLS error =", type(exc).__name__)
+        return 1
+
+
 def ask_openai(key, model, snapshot):
     payload={
         "model":model,
@@ -183,8 +229,9 @@ def ask_openai(key, model, snapshot):
         with urlopen(req,timeout=85) as r:
             out=json.load(r)
     except HTTPError as e:
-        # Do not print request/response body: secrets or sensitive data may appear.
-        raise c.APIError("Ошибка OpenAI API: HTTP "+str(e.code)) from None
+        # Only show safe machine-readable API error type/code; never print a token,
+        # raw body, request headers, messages containing personal information.
+        raise c.APIError("Ошибка OpenAI API: " + safe_api_error(e)) from None
     except (TimeoutError, URLError) as e:
         raise c.APIError("Не удалось получить ответ OpenAI API: "+type(e).__name__) from None
     decision=decode_response(out)
@@ -358,11 +405,13 @@ def run(dry_run=False):
 def main():
     import argparse
     p=argparse.ArgumentParser(description="GPT-driven decision agent for T-Invest Sandbox only")
-    p.add_argument("action",choices=["setup","run","dry-run","status"])
+    p.add_argument("action",choices=["setup","run","dry-run","status","diagnose"])
     args=p.parse_args()
     try:
         if args.action=="setup":
             setup_key()
+        elif args.action=="diagnose":
+            return diagnose_api()
         elif args.action=="status":
             ai=ai_config()
             state=t.load_json(t.STATE_FILE,{})
