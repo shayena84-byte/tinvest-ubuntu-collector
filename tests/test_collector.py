@@ -63,6 +63,35 @@ class TestCollector(unittest.TestCase):
             api.call("accounts",{})
         self.assertIn("invalid candle window",str(err.exception))
         self.assertNotIn("DUMMYSECRET",str(err.exception))
+    def test_quote_sber_uses_ticker_and_board_not_ambiguous_find(self):
+        class Fake:
+            def __init__(self): self.requests=[]
+            def call(self, method, body):
+                self.requests.append((method, body))
+                if method=="instrument":
+                    return {"instrument":{"ticker":"SBER","classCode":"TQBR",
+                                         "uid":"verified-tqbr-uid","isin":"RU0009029540",
+                                         "name":"Сбербанк"}}
+                raise AssertionError("Quote must not call unfiltered FindInstrument for SBER")
+        api=Fake()
+        instrument=C.quote_instrument(api,"SBER")
+        self.assertEqual(instrument["uid"],"verified-tqbr-uid")
+        self.assertEqual(api.requests[0],("instrument",{
+            "idType":"INSTRUMENT_ID_TYPE_TICKER","classCode":"TQBR","id":"SBER"}))
+
+    def test_quote_refuses_wrong_board_or_ambiguous_isin(self):
+        class Fake:
+            def call(self,method,body):
+                if method=="instrument":
+                    return {"instrument":{"ticker":"SBER","classCode":"SPBRU","uid":"bad-uid"}}
+                return {"instruments":[
+                    {"ticker":"OMEGA","isin":"RU000A1092T7","uid":"a"},
+                    {"ticker":"OMEGA","isin":"RU000A1092T7","uid":"b"}]}
+        with self.assertRaises(C.APIError):
+            C.quote_instrument(Fake(),"SBER")
+        with self.assertRaises(C.APIError):
+            C.quote_instrument(Fake(),"RU000A1092T7")
+
     def test_portfolio_transform(self):
         raw={'accountId':'123secret','totalAmountPortfolio':{'currency':'rub','units':'1000','nano':0},'positions':[{'instrumentUid':'uid1','quantity':{'units':'10','nano':0},'currentPrice':{'currency':'rub','units':'100','nano':0}}]}
         p=C.portfolio_transform(raw)
