@@ -342,7 +342,7 @@ def store_snapshot(db, instrument, row, now):
         instrument["uid"], slot, fetched_at, row["last_price"], row["last_trade_utc"],
         row["book_time_utc"], row["best_bid"], row["best_ask"], row["spread_pct"],
         row["bid_top_lots"], row["ask_top_lots"], row["bids_total"], row["asks_total"],
-        row["book_stale_seconds"], row["last_stale_seconds","quality_status","quality_reason"]
+        row["book_stale_seconds"], row["last_stale_seconds"]
     )
     with db:
         db.execute("""INSERT INTO instruments
