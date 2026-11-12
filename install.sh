@@ -10,6 +10,9 @@ DEST="$HOME/tinvest-collector"
 mkdir -p "$DEST" "$HOME/tinvest-reports" "$HOME/.config/tinvest-readonly"
 chmod 700 "$DEST" "$HOME/tinvest-reports" "$HOME/.config/tinvest-readonly"
 install -m 700 "$ROOT/collector.py" "$DEST/collector.py"
+if [[ -f "$ROOT/sandbox.py" ]]; then
+  install -m 700 "$ROOT/sandbox.py" "$DEST/sandbox.py"
+fi
 echo "Сборщик установлен в $DEST"
 echo "1. Выпустите READ-ONLY токен Т-Банка."
 echo "2. Запустите: python3 $DEST/collector.py setup"
