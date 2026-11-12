@@ -43,6 +43,39 @@ done
 # Existing dashboard user service remains active unless explicitly restarted.
 systemctl --user restart tinvest-sandbox-dashboard.service
 
+# Extend watchlist without deleting user-defined market instruments.
+python3 - "$CONF/market-recorder.json" <<'PY'
+import json, os, sys
+from pathlib import Path
+path=Path(sys.argv[1])
+cfg=json.loads(path.read_text("utf-8"))
+more=[
+ {"symbol":"MOEX","board":"TQBR","kind":"share"},
+ {"symbol":"YDEX","board":"TQBR","kind":"share"},
+ {"symbol":"ROSN","board":"TQBR","kind":"share"},
+ {"symbol":"LKOH","board":"TQBR","kind":"share"},
+ {"symbol":"NVTK","board":"TQBR","kind":"share"},
+ {"symbol":"RU000A106MV2","board":"TQCB","kind":"bond"},
+ {"symbol":"SU26232RMFS7","board":"TQCB","kind":"bond"},
+ {"symbol":"SU26251RMFS7","board":"TQCB","kind":"bond"}
+]
+seen={(i["symbol"],i["board"]) for i in cfg["instruments"]}
+for item in more:
+    if len(cfg["instruments"])>=10:break
+    if (item["symbol"],item["board"]) not in seen:
+        cfg["instruments"].append(item)
+        seen.add((item["symbol"],item["board"]))
+temp=path.with_name(path.name+".tmp")
+old=os.umask(0o077)
+try:
+    temp.write_text(json.dumps(cfg,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    os.chmod(temp,0o600)
+    temp.replace(path)
+finally:
+    os.umask(old)
+print("Отслеживаемых в SQLite инструментов:",len(cfg["instruments"]))
+PY
+
 # Do not accidentally run two bots against the same virtual account.
 systemctl --user disable --now tinvest-sandbox-ai.timer 2>/dev/null || true
 systemctl --user disable --now tinvest-sandbox-autotrader.timer 2>/dev/null || true
