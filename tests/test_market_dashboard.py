@@ -42,7 +42,7 @@ class TestMarketDashboard(unittest.TestCase):
         return payload
 
     def test_quality_only_valid_in_spread_summary(self):
-        self.record("299.60","299.61",self.now-timedelta(minutes=5))
+        self.record("299.60","299.61",self.now-timedelta(minutes=5),stamp="2026-11-12T15:54:00Z")
         self.record("299.78","299.63",self.now)
         result=dashboard.dashboard_data(self.db,hours=24,now=self.now+timedelta(seconds=10))
         self.assertEqual(len(result["summary"]),1)
