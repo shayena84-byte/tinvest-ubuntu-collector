@@ -217,7 +217,7 @@ function render(){
       {key:"asks_total",color:COLORS.red,validOnly:true}
     ],{label:"Спрос и предложение в первых десяти уровнях",digits:0});
   renderTable(rows);
-  renderAnomalies(currentPayload.anomalies||[]);
+  renderAnomalies(filteredAnomalies());
 }
 async function load(){
   const button=$("refresh"),badge=$("conn");
@@ -246,7 +246,8 @@ async function load(){
     $("updated").textContent="Обновлено: "+stamp(payload.generated_utc)+
       (payload.truncated?" · Часть истории ограничена":"")+
       " · UTC+3 (МСК)";
-    if(selectedKey)render();
+    updateAnomalySelectors();
+    if(selectedKey){render();loadDepth();}
     else {$("error").textContent="В базе нет инструментов. Запустите сборщик."; $("error").style.display="block";}
   }catch(err){
     badge.textContent="● Ошибка данных";badge.className="pill err";
@@ -255,12 +256,104 @@ async function load(){
     $("error").style.display="block";
   }finally{button.disabled=false}
 }
+
+let currentDepth = null;
+function renderOrderTable(id, rows, color) {
+  const tbody=$(id);tbody.replaceChildren();
+  if(!rows || !rows.length) {
+    const tr=node("tr");appendCell(tr,"Нет доступных уровней");tbody.append(tr);return;
+  }
+  const peak=Math.max(...rows.map(x=>Number(x.lots)||0),1);
+  for(const item of rows.slice(0,10)) {
+    const tr=node("tr");
+    appendCell(tr,num(item.price,4),"num");
+    appendCell(tr,num(item.lots,0),"num");
+    const cell=appendCell(tr,"");
+    const bar=node("div");
+    bar.style.background=color;
+    bar.style.width=Math.max(1,100*(Number(item.lots)||0)/peak)+"%";
+    bar.style.height="9px";bar.style.borderRadius="3px";
+    cell.append(bar);tbody.append(tr);
+  }
+}
+function renderFill() {
+  const qty=$("lots").value;
+  const payload=currentDepth;
+  const scenarios=payload?.simulation?.[qty];
+  const denomination=payload?.kind==="bond"?"% номинала":"₽ за акцию";
+  for(const key of ["sell","buy"]) {
+    const row=scenarios?.[key];
+    $(key+"-est").textContent=row?.average_quote!=null
+      ?num(row.average_quote,4)+" "+denomination:"—";
+    $(key+"-fill").textContent=row
+      ?"Доступно "+row.filled_lots+" из "+row.requested_lots+" лотов; не исполнено "+row.unfilled_lots
+      :"Нет подтверждённой актуальной глубины";
+  }
+  const warning=$("fill-warning");
+  warning.textContent=payload?.executable_quality
+    ?"Только оценка по показанным уровням: реальное исполнение, комиссии, НКД и рыночное воздействие могут отличаться."
+    :"Расчёт отключён: последний стакан устарел, не подтверждён или содержит аномалию.";
+}
+async function loadDepth() {
+  currentDepth=null;
+  const [symbol,board]=selectedKey.split("@");
+  if(!symbol || !board)return;
+  const expected=selectedKey;
+  try {
+    const response=await fetch("/api/book?symbol="+encodeURIComponent(symbol)
+      +"&board="+encodeURIComponent(board)
+      +"&hours="+encodeURIComponent($("range").value),{cache:"no-store"});
+    if(!response.ok)throw Error("HTTP "+response.status);
+    const data=await response.json();
+    if(selectedKey!==expected)return;
+    currentDepth=data;
+    const latest=data.snapshot;
+    $("depth-stamp").textContent=latest
+      ?"Срез: "+stamp(latest.collected_utc)+" · статус: "
+       +(STATUSES[latest.quality_status]||latest.quality_status)
+      :"Снимков не обнаружено";
+    renderOrderTable("depth-bids",data.levels?.bid,COLORS.teal);
+    renderOrderTable("depth-asks",data.levels?.ask,COLORS.amber);
+    const history=(data.series||[]).map(x=>({
+       slot_utc:x.time,quality_status:x.quality,imbalance:x.imbalance
+    }));
+    drawChart("imbalance-chart",history,[
+      {key:"imbalance",color:COLORS.violet,validOnly:true}
+    ],{label:"Дисбаланс спроса и предложения по актуальным стаканам",digits:3});
+    renderFill();
+  }catch(err) {
+    $("depth-stamp").textContent="Не удалось загрузить уровни: "+String(err.message||err);
+    renderOrderTable("depth-bids",[],COLORS.teal);
+    renderOrderTable("depth-asks",[],COLORS.amber);
+    renderFill();
+  }
+}
+function filteredAnomalies() {
+  const rows=currentPayload?.anomalies||[];
+  const kind=$("anomaly-filter").value;
+  const inst=$("anomaly-instrument").value;
+  return rows.filter(x=>(kind==="all"||x.status===kind)
+    &&(inst==="all"||x.ticker+"@"+x.board===inst));
+}
+function updateAnomalySelectors() {
+  const select=$("anomaly-instrument");
+  const old=select.value||"all";
+  const names=[...new Set((currentPayload?.anomalies||[]).map(x=>x.ticker+"@"+x.board))];
+  select.replaceChildren();
+  const first=node("option","","Все инструменты");first.value="all";select.append(first);
+  for(const key of names) {const el=node("option","",key);el.value=key;select.append(el);}
+  select.value=names.includes(old)?old:"all";
+}
+
 document.addEventListener("DOMContentLoaded",()=>{
   $("range").addEventListener("change",load);
   $("instrument").addEventListener("change",event=>{
-    selectedKey=event.target.value;render();
+    selectedKey=event.target.value;render();loadDepth();
   });
   $("refresh").addEventListener("click",load);
+  $("lots").addEventListener("change",renderFill);
+  $("anomaly-filter").addEventListener("change",()=>renderAnomalies(filteredAnomalies()));
+  $("anomaly-instrument").addEventListener("change",()=>renderAnomalies(filteredAnomalies()));
   load();
   setInterval(load,60000);
 });
