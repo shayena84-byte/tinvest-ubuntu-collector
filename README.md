@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.0
+# T-Invest Ubuntu Collector v1.1
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -38,6 +38,43 @@ python3 ~/tinvest-collector/collector.py quote RU000A1092T7 --depth 10
 
 **Важно:** итоговый ZIP содержит конфиденциальные финансовые сведения и **не зашифрован**. Его нельзя публиковать на GitHub. Для анализа загрузите этот ZIP отдельно в приватную беседу ChatGPT; автоматической передачи данных нет.
 
+## Проверка песочницы T-Invest (Sandbox)
+
+**Sandbox полностью отделён от реального счёта.** Используется другой адрес API и отдельный файл токена `~/.config/tinvest-readonly/sandbox-token`. Все действия `open` и `fund` выполняются только с виртуальными счетами.
+
+Если ранее создали токен Sandbox через обычный `collector.py setup`, один раз перенесите его в отдельный файл:
+
+```bash
+mv ~/.config/tinvest-readonly/token ~/.config/tinvest-readonly/sandbox-token
+chmod 600 ~/.config/tinvest-readonly/sandbox-token
+```
+
+Если токен ранее не сохраняли, выполните `python3 ~/tinvest-collector/sandbox.py setup`. **Не переносите Production-токен в sandbox-token.**
+
+Подключение к Sandbox с сохранением проверки TLS и вашего отдельного CA bundle:
+
+```bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py accounts
+```
+
+Если открытых счетов нет, создайте виртуальный и проверьте его:
+
+```bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py open
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py accounts
+```
+
+Пополнить выбранный счёт на 100 000 **виртуальных** рублей (замените `tb_...` псевдонимом из `accounts`):
+
+```bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py fund tb_123456789abc 100000
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py snapshot --days 7
+```
+
+Архивы Sandbox сохраняются отдельно в `~/tinvest-reports/sandbox/`. Данные песочницы не являются реальными позициями брокерского счёта. Торговых методов даже в Sandbox в сборщике нет: только чтение, создание и виртуальное пополнение счёта.
+
+Официальная документация: https://developer.tbank.ru/invest/intro/developer/sandbox/.
+
 ## Ограничения
 
 - Реальная авторизация на вашем счёте ещё не проверена. Юнит-тесты используют синтетические данные.
@@ -45,6 +82,6 @@ python3 ~/tinvest-collector/collector.py quote RU000A1092T7 --depth 10
 - История операций ограничена 100 страницами за один запуск, при неполноте будет предупреждение.
 - Инструмент не подключает ВТБ, его отчёты анализируются отдельно.
 - Если возникают ошибки TLS, не отключайте проверку сертификатов.
-- Для сбора данных необходим доступ Ubuntu к `invest-public-api.tbank.ru`.
+- Для Production требуется доступ Ubuntu к `invest-public-api.tbank.ru`, для Sandbox — к `sandbox-invest-public-api.tbank.ru`.
 
 Официальная документация: https://developer.tbank.ru/invest/intro/intro
