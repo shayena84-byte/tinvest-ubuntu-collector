@@ -367,15 +367,27 @@ def snapshot(api, days, acc_filter=None, no_ops=False, no_instruments=False):
     return output
 
 
-def quote_instrument(api, search):
-    """Choose a precise instrument. For ordinary equity tickers prefer TQBR lookup.
+def quote_instrument(api, search, board=None):
+    """Resolve exactly one instrument/board, failing closed if identity differs.
 
-    Same ticker/ISIN may be returned under several venues with different UIDs.
-    Never guess one from an unfiltered list.
+    MOEX equities usually use TQBR; listed ruble bonds usually use TQCB.
+    Multiple trading venues may share the same ISIN but have DIFFERENT UIDs.
     """
-    symbol = search.strip().upper()
-    # Ticker+classCode is unique for the main Moscow Exchange equity board.
-    if symbol in {"SBER", "MOEX", "YDEX", "ROSN", "LKOH", "NVTK", "T", "VTBR", "TATN", "SBERP", "GAZP", "GMKN", "PLZL", "POSI", "DOMRF"}:
+    symbol = str(search).strip().upper()
+    if not symbol:
+        raise APIError("Укажите тикер, ISIN или UID")
+    if board is not None:
+        board = str(board).strip().upper()
+        if not (2 <= len(board) <= 10 and board.isalnum()):
+            raise APIError("Некорректный код торговой доски")
+
+    primary_shares = {
+        "SBER", "MOEX", "YDEX", "ROSN", "LKOH", "NVTK", "T",
+        "VTBR", "TATN", "SBERP", "GAZP", "GMKN", "PLZL",
+        "POSI", "DOMRF"
+    }
+
+    if symbol in primary_shares and (board is None or board == "TQBR"):
         resp = api.call("instrument", {
             "idType": "INSTRUMENT_ID_TYPE_TICKER",
             "classCode": "TQBR",
@@ -388,26 +400,52 @@ def quote_instrument(api, search):
             raise APIError("Не удалось подтвердить UID акции " + symbol + " на доске TQBR")
         return inst
 
-    res = api.call("find", {"query": search})
+    res = api.call("find", {"query": symbol})
     instruments = res.get("instruments", [])
-    candidates = [x for x in instruments if search.casefold() in
-                  {str(x.get(k, "")).casefold() for k in ("isin", "ticker", "uid", "figi")}]
-    if not candidates:
-        print("Точных совпадений не найдено. Ближайшие варианты:")
-        for x in instruments[:10]:
-            print(f"- {x.get('name','')} | {x.get('ticker','')} | {x.get('isin','')} | {x.get('uid','')}")
-        raise APIError("Для запроса котировок используйте точный ISIN, UID или тикер")
-    if len(candidates) > 1:
-        print("Найдено несколько совпадений — укажите UID и проверьте доску торгов:")
-        for x in candidates:
-            print(f"- {x.get('name','')} | {x.get('ticker','')} | "
-                  f"{x.get('isin','')} | {x.get('classCode','')} | {x.get('uid','')}")
-        raise APIError("Неоднозначный запрос; выбор инструмента остановлен")
-    return candidates[0]
+    candidates = [x for x in instruments if symbol in {
+        str(x.get(k, "")).upper() for k in ("isin", "ticker", "uid", "figi")
+    }]
+
+    # For a 12-char ISIN, default to the main ruble-bond MOEX board TQCB,
+    # but ONLY when it is explicitly present among the returned matches.
+    looks_like_isin = (len(symbol) == 12 and symbol[:2].isalpha()
+                       and symbol.isalnum())
+    selected_board = board or ("TQCB" if looks_like_isin else None)
+    if selected_board is not None:
+        candidates = [x for x in candidates
+                      if str(x.get("classCode", "")).upper() == selected_board]
+
+    if len(candidates) != 1:
+        print("Подходящих однозначных совпадений не найдено. Возможные доски/UID:")
+        for x in instruments[:15]:
+            if symbol in {str(x.get(k, "")).upper() for k in ("isin", "ticker", "uid", "figi")}:
+                print(f"- {x.get('name','')} | {x.get('ticker','')} | {x.get('isin','')} | "
+                      f"{x.get('classCode','')} | {x.get('uid','')}")
+        if selected_board is not None:
+            raise APIError(f"Не найден единственный инструмент на доске {selected_board}; "
+                           "используйте --board для другого режима торгов")
+        raise APIError("Неоднозначный запрос; укажите --board или точный UID")
+
+    candidate = candidates[0]
+    uid = candidate.get("uid")
+    if not uid:
+        raise APIError("У выбранной бумаги отсутствует UID")
+    # Cross-check identity against the authoritative instrument lookup
+    # before requesting market data by UID.
+    detail = api.call("instrument", {
+        "idType": "INSTRUMENT_ID_TYPE_UID",
+        "id": uid,
+    }).get("instrument") or {}
+    expected_isin = str(candidate.get("isin", "")).upper()
+    if (str(detail.get("uid", "")) != str(uid)
+            or str(detail.get("classCode", "")).upper() != str(candidate.get("classCode", "")).upper()
+            or (expected_isin and str(detail.get("isin", "")).upper() != expected_isin)):
+        raise APIError("UID, ISIN или торговая доска не совпадают при проверке инструмента")
+    return detail
 
 
-def quote(api, search, depth=10):
-    inst = quote_instrument(api, search)
+def quote(api, search, depth=10, board=None):
+    inst = quote_instrument(api, search, board=board)
     uid = inst.get("uid") or inst.get("figi")
     if not uid:
         raise APIError("Для найденного инструмента не получен UID/FIGI")
@@ -441,6 +479,7 @@ def main():
     qu = sub.add_parser("quote", help="Рыночная цена и стакан по точному ISIN/UID/тикеру")
     qu.add_argument("id")
     qu.add_argument("--depth", type=int, default=10)
+    qu.add_argument("--board", help="Код торговой доски, например TQCB для облигаций")
     args = parser.parse_args()
     try:
         if args.command == "setup":
@@ -458,7 +497,7 @@ def main():
         elif args.command == "quote":
             if not 1 <= args.depth <= 50:
                 raise APIError("--depth: число от 1 до 50")
-            quote(api, args.id, args.depth)
+            quote(api, args.id, args.depth, board=args.board)
         return 0
     except (APIError, ValueError, PermissionError) as e:
         print(f"Ошибка: {e}", file=sys.stderr)
