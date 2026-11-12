@@ -19,13 +19,14 @@ import ai_sandbox_agent as ai
 import ollama_sandbox_agent as shared  # reusable risk/quality/equity routines; NO Ollama calls
 import sandbox_autotrader as t
 import trading_session as session
+import v19_guard as guard
 
 c = t.c
-MAX_TRADE_FRACTION = 0.35
-MAX_EXPOSURE_FRACTION = 0.80
-MAX_DAILY_LOSS_FRACTION = 0.07
-MAX_ORDERS_DAY = 6
-MAX_API_CALLS_DAY = 110
+MAX_TRADE_FRACTION = 0.10
+MAX_EXPOSURE_FRACTION = 0.50
+MAX_DAILY_LOSS_FRACTION = 0.03
+MAX_ORDERS_DAY = 3
+MAX_API_CALLS_DAY = 24
 REQUIRED_CONFIDENCE = 0.70
 MAX_BOOK_AGE = 600
 MAX_SPREAD_PCT = 0.8
@@ -59,6 +60,7 @@ def status():
         "model": cfg["model"],
         "mode": "T-Invest Sandbox only",
         "risk_ceiling_per_trade": cfg["max_trade_fraction"],
+        "openai_quota_block": guard.block_status(),
         "daily_ai_calls": state.get("ai_calls_today", 0),
         "daily_orders": state.get("orders_today", 0),
         "virtual_equity": shared.history(),
@@ -93,6 +95,9 @@ def session_status():
 def one_cycle(dry_run=False):
     now = datetime.now(timezone.utc)
     cfg = config()
+    if guard.is_blocked():
+        ai.log("openai_quota_circuit_open", dry_run=dry_run)
+        return 0
     # Trading availability is a per-instrument live broker status, not a
     # Moscow-time window. This deliberately supports any verified evening or
     # special session while remaining fail-closed on weekends and holidays.
@@ -150,7 +155,13 @@ def one_cycle(dry_run=False):
         t.atomic_save(t.STATE_FILE, st)
 
     # One cloud model decision, no tool access or brokerage credentials.
-    decision, usage = ai.ask_openai(key, cfg["model"], context)
+    try:
+        decision, usage = ai.ask_openai(key, cfg["model"], context)
+    except c.APIError as exc:
+        if guard.is_quota_error(str(exc)):
+            guard.block_quota()
+            ai.log("openai_quota_circuit_open", dry_run=dry_run)
+        raise
     ai.log("ai_decision", provider="openai", action=decision["action"],
            symbol=decision["symbol"], lots=decision["lots"],
            confidence=decision["confidence"], reason=decision["reason"],
@@ -222,9 +233,13 @@ def one_cycle(dry_run=False):
 
 def main():
     p = argparse.ArgumentParser(description="OpenAI API decision engine - T-Invest Sandbox ONLY")
-    p.add_argument("action", choices=("doctor","status","session","dry-run","run"))
+    p.add_argument("action", choices=("doctor","status","session","dry-run","run","reset-api-block"))
     action = p.parse_args().action
     try:
+        if action == "reset-api-block":
+            guard.reset_quota()
+            print("OpenAI quota circuit reset; this does not enable the trading timer.")
+            return 0
         if action == "doctor": return doctor()
         if action == "status": return status()
         if action == "session": return session_status()

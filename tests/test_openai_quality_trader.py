@@ -21,10 +21,10 @@ class TestOpenAIQualityTrader(unittest.TestCase):
         with patch.object(trader.ai,"ai_config",return_value=orig):
             cfg=trader.config()
         self.assertEqual(cfg["model"],"gpt-6.1-sol")
-        self.assertEqual(cfg["max_trade_fraction"],0.35)
-        self.assertEqual(cfg["max_exposure_fraction"],0.80)
-        self.assertEqual(cfg["max_orders_per_day"],6)
-        self.assertEqual(cfg["max_daily_loss_fraction"],0.07)
+        self.assertEqual(cfg["max_trade_fraction"],0.10)
+        self.assertEqual(cfg["max_exposure_fraction"],0.50)
+        self.assertEqual(cfg["max_orders_per_day"],3)
+        self.assertEqual(cfg["max_daily_loss_fraction"],0.03)
         self.assertEqual(cfg["minimum_confidence"],0.70)
 
     def test_doctor_delegates_existing_openai_key_and_model_access(self):
