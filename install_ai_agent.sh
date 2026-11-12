@@ -94,8 +94,8 @@ if [[ ! -s "$CONF/openai-api-key" ]]; then
   echo "Finally start the new agent: systemctl --user enable --now tinvest-sandbox-ai.timer"
   exit 0
 fi
-systemctl --user enable --now tinvest-sandbox-ai.timer
-echo "Model-driven Sandbox timer ENABLED. Old indicator bot DISABLED."
-echo "View: systemctl --user list-timers 'tinvest-sandbox-*'"
+echo "Installed patched AI agent. Sandbox timer is DISABLED until you verify one dry-run."
+echo "Test: SSL_CERT_FILE=$HOME/.config/tinvest-readonly/ca-bundle.pem python3 $DEST/ai_sandbox_agent.py dry-run"
+echo "Then enable: systemctl --user enable --now tinvest-sandbox-ai.timer"
 echo "Logs: journalctl --user -u tinvest-sandbox-ai.service -n 60 --no-pager"
 echo "STOP: systemctl --user disable --now tinvest-sandbox-ai.timer"
