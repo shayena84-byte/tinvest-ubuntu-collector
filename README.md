@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.7.0
+# T-Invest Ubuntu Collector v1.8.0
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -357,6 +357,32 @@ bash install_openai_backend.sh
 Существующий ключ ~/.config/tinvest-readonly/openai-api-key используется автоматически; Ollama не нужна. Установщик делает резервную копию SQLite, обновляет UI, отключает прежние торговые таймеры и проверяет выбранную модель OpenAI. Если доступ подтверждён, включается только таймер tinvest-sandbox-openai.timer.
 
 Документация: [V1_7_OPENAI_SANDBOX.md](V1_7_OPENAI_SANDBOX.md). Региональная и проектная доступность OpenAI API определяется действующими условиями провайдера, и установка не обходит такие ограничения.
+
+## v1.8.0 — динамический торговый статус вместо ограниченного времени сессии
+
+OpenAI Trader больше не отключается автоматически после 18:35 МСК. В v1.8.0 доступность торговли каждой акции определяется по **GetTradingStatus конкретного UID** и трём обязательным условиям: NORMAL_TRADING, apiTradeAvailableFlag и marketOrderAvailableFlag. Аукционы, закрытые и неподтверждённые статусы блокируют заявки; перед торговым поручением статус запрашивается повторно.
+
+Вечерние, специальные и выходные сессии оцениваются **по фактическому API**, без предположений о торговом календаре.
+
+**Обновление поверх v1.7.0:**
+
+~~~bash
+cd ~
+wget -O tinvest_ubuntu_collector_v1.8.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.8.0/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.8.0.zip
+cd tinvest_ubuntu_collector
+bash upgrade_dynamic_session.sh
+~~~
+
+Установка не меняет ключи, SQLite, конфигурацию SOCKS5 или systemd override. Существующий торговый таймер оставляется выключенным для проверки.
+
+**Проверить статус каждой акции без OpenAI и без торговли:**
+
+~~~bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" python3 ~/tinvest-collector/openai_quality_trader.py session
+~~~
+
+См. [V1_8_DYNAMIC_TRADING_STATUS.md](V1_8_DYNAMIC_TRADING_STATUS.md). Используется только T-Invest Sandbox, реальная торговля недоступна.
 
 ## Ограничения
 
