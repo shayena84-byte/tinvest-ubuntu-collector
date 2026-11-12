@@ -292,10 +292,10 @@ def validate(decision,context,ai_cfg,st,now):
 def run(dry_run=False):
     now=datetime.now(timezone.utc)
     cfg=ai_config()
-    old_cfg=t.config()
     if not t.market_hours(now):
         log("closed_market")
         return
+    old_cfg=t.config()
     if c.TOKEN_PATH.name!="sandbox-token":
         raise c.APIError("Отсутствует изоляция Sandbox-токена")
     if not isinstance(old_cfg["account_ref"],str):
