@@ -1,4 +1,4 @@
-name: Test and publish v1.3 archive
+name: Test and publish v1.3.1 archive
 on:
   push:
     branches: [main]
@@ -7,6 +7,10 @@ on:
       - "ai_sandbox_agent.py"
       - "install_ai_agent.sh"
       - "tests/test_ai_agent.py"
+      - "sandbox_autotrader.py"
+      - "collector.py"
+      - "tests/test_autotrader.py"
+      - "tests/test_collector.py"
   workflow_dispatch:
 
 permissions:
@@ -36,8 +40,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.3 >/dev/null 2>&1; then
-            gh release upload v1.3 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.3.1 >/dev/null 2>&1; then
+            gh release upload v1.3.1 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.3 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.3" --notes "AI model decision agent for T-Invest Sandbox, 5-minute user timer, strict risk checks, no production trading."
+            gh release create v1.3.1 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.3.1" --notes "AI Sandbox agent GetCandles hotfix; validated offline, no production trading."
           fi
