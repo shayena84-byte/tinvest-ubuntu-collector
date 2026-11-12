@@ -1,71 +1,53 @@
-name: Test and publish v1.8.0 archive
+name: Test and publish v1.9.0 archive
 on:
   push:
     branches: [main]
     paths:
       - ".github/workflows/release.yml"
-      - "ai_sandbox_agent.py"
-      - "install_ai_agent.sh"
-      - "tests/test_ai_agent.py"
-      - "sandbox_autotrader.py"
-      - "collector.py"
-      - "tests/test_autotrader.py"
-      - "tests/test_collector.py"
-      - "market_recorder.py"
-      - "tests/test_market_recorder.py"
-      - "install_market_recorder.sh"
-      - "MARKET_RECORDER.md"
-      - "market_dashboard.py"
-      - "dashboard.html"
-      - "dashboard.js"
-      - "install_market_quality.sh"
-      - "MARKET_QUALITY_DASHBOARD.md"
-      - "tests/test_market_dashboard.py"
-      - "ollama_sandbox_agent.py"
-      - "tests/test_ollama_sandbox_agent.py"
-      - "install_v1_6.sh"
-      - "V1_6_AUTONOMOUS_SANDBOX.md"
-      - "openai_quality_trader.py"
-      - "install_openai_backend.sh"
-      - "tests/test_openai_quality_trader.py"
-      - "V1_7_OPENAI_SANDBOX.md"
-      - "trading_session.py"
-      - "tests/test_trading_session.py"
-      - "upgrade_dynamic_session.sh"
-      - "V1_8_DYNAMIC_TRADING_STATUS.md"
+      - "**.py"
+      - "tests/**"
+      - "upgrade_v1_9.sh"
+      - "V1_9_SAFETY.md"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Run offline tests
+      - name: Compile and offline tests
         run: |
-          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py market_dashboard.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py
-          bash -n install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh
+          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py market_dashboard.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py v19_guard.py v19_health.py
+          bash -n install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh upgrade_v1_9.sh
           node --check dashboard.js
           python3 -m unittest discover -s tests -v
 
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Build installer ZIP
         run: |
           mkdir -p /tmp/tinvest_ubuntu_collector
-          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md V1_6_AUTONOMOUS_SANDBOX.md V1_7_OPENAI_SANDBOX.md V1_8_DYNAMIC_TRADING_STATUS.md /tmp/tinvest_ubuntu_collector/
+          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py v19_guard.py v19_health.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh upgrade_v1_9.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md V1_6_AUTONOMOUS_SANDBOX.md V1_7_OPENAI_SANDBOX.md V1_8_DYNAMIC_TRADING_STATUS.md V1_9_SAFETY.md /tmp/tinvest_ubuntu_collector/
           cp -r tests /tmp/tinvest_ubuntu_collector/
           cd /tmp
           zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
-
-      - name: Publish release
+      - name: Publish release v1.9.0
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.8.0 >/dev/null 2>&1; then
-            gh release upload v1.8.0 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.9.0 >/dev/null 2>&1; then
+            gh release upload v1.9.0 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.8.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.8.0" --notes "Dynamic per-instrument GetTradingStatus allows verified evening sessions, rechecks before Sandbox virtual orders, and preserves SOCKS5 settings."
+            gh release create v1.9.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.9.0" --notes-file V1_9_SAFETY.md
           fi
