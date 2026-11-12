@@ -51,6 +51,29 @@ class TestSandboxTrader(unittest.TestCase):
         self.assertEqual(state["orders_today"],0)
         self.assertEqual(state["start_equity"],"10000")
 
+    def test_candles_request_conservative_window(self):
+        from datetime import timedelta
+        now=datetime(2026,11,12,11,0,tzinfo=timezone.utc)
+        class Stub:
+            body=None
+            def call(self,method,payload):
+                self.body=(method,payload)
+                candles=[]
+                for i in range(45):
+                    ts=now-timedelta(minutes=(45-i)*5)
+                    candles.append({"time":ts.isoformat(),"close":{"units":str(300+i//10),"nano":0},
+                                    "volume":10,"isComplete":True})
+                return {"candles":candles}
+        fake=Stub()
+        values=t.candles(fake,"test_uid",now)
+        self.assertEqual(len(values),45)
+        method,body=fake.body
+        self.assertEqual(method,"trader_candles")
+        self.assertEqual(body["interval"],"CANDLE_INTERVAL_5_MIN")
+        self.assertLess((now-datetime.fromisoformat(body["from"])).total_seconds(),7*24*3600)
+        self.assertNotIn("candleSourceType",body)
+        self.assertLessEqual(body["limit"],500)
+
     def test_buy_signal_not_for_overbought(self):
         bullish={"ema9":101,"ema21":100,"rsi14":62,"momentum_30m":.006}
         self.assertTrue(t.buy_signal(bullish))
