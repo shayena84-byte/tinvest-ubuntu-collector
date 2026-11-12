@@ -105,6 +105,95 @@ def dashboard_data(db_path=DEFAULT_DB,hours=24,now=None):
             "truncated":len(rows)>=MAX_HISTORY_ROWS}
 
 
+def simulate_depth(levels, requested_lots):
+    """Walk published levels; return quote-unit weighted average and depth shortage."""
+    if not isinstance(requested_lots,int) or not 1<=requested_lots<=10000:
+        raise ValueError("Invalid quantity")
+    if not levels:
+        return {"requested_lots":requested_lots,"filled_lots":0,
+                "unfilled_lots":requested_lots,"average_quote":None,
+                "worst_quote":None,"estimated":True}
+    from decimal import Decimal
+    remaining=requested_lots
+    notion=Decimal(0)
+    last=None
+    for entry in levels:
+        available=int(entry["lots"])
+        if available<0: continue
+        qty=min(remaining,available)
+        notion+=Decimal(str(entry["price"]))*qty
+        remaining-=qty
+        if qty:last=Decimal(str(entry["price"]))
+        if not remaining:break
+    filled=requested_lots-remaining
+    return {"requested_lots":requested_lots,"filled_lots":filled,
+            "unfilled_lots":remaining,
+            "average_quote":str((notion/filled).quantize(Decimal("0.000001"))) if filled else None,
+            "worst_quote":str(last) if last is not None else None,
+            "estimated":True}
+
+
+def depth_data(db_path=DEFAULT_DB, symbol="SBER", board="TQBR", hours=24, now=None):
+    """Read full 10-level snapshot and historical top-10 order imbalance.
+
+    No account details. Prices are stored in instrument quote units.
+    Does not infer nominal value, RUB cash amounts, or true fill guarantees.
+    """
+    if hours not in ALLOWED_HOURS:
+        raise ValueError("Allowed hours")
+    if not symbol.isalnum() or not board.isalnum() or len(symbol)>20 or len(board)>10:
+        raise ValueError("Invalid instrument")
+    now=now or datetime.now(timezone.utc)
+    boundary=(now-timedelta(hours=hours)).isoformat(timespec="seconds")
+    with db_readonly(db_path) as db:
+        ident=db.execute(
+           "SELECT uid,ticker,board,kind FROM instruments WHERE ticker=? AND board=?",
+           (symbol,board)).fetchone()
+        if ident is None:
+            return {"instrument":symbol+"@"+board,"snapshot":None,"series":[],
+                    "simulation":{},"error":"not_found"}
+        snaps=[dict(r) for r in db.execute(
+           """SELECT id, slot_utc, collected_utc, quality_status, quality_reason,
+                     best_bid, best_ask, book_time_utc, bids_total, asks_total,
+                     spread_pct
+              FROM snapshots WHERE uid=? AND collected_utc>=?
+              ORDER BY collected_utc DESC LIMIT 2016""",
+           (ident["uid"],boundary)).fetchall()]
+        if not snaps:
+            return {"instrument":symbol+"@"+board,"snapshot":None,"series":[],
+                    "simulation":{},"error":"empty"}
+        latest=snaps[0]
+        sides={}
+        for side in ("bid","ask"):
+            sides[side]=[dict(r) for r in db.execute(
+                 """SELECT level,price,lots FROM book_levels
+                    WHERE snapshot_id=? AND side=? ORDER BY level LIMIT 20""",
+                 (latest["id"],side)).fetchall()]
+    col_time=datetime.fromisoformat(latest["collected_utc"])
+    # The simulated execution is informative only on fresh, internally consistent snapshots.
+    usable=(latest["quality_status"]=="valid" and
+            0 <= (now-col_time).total_seconds() <= 600)
+    series=[]
+    for row in reversed(snaps):
+        b,a=row["bids_total"],row["asks_total"]
+        denom=b+a
+        series.append({"time":row["collected_utc"],"quality":row["quality_status"],
+                       "bid_lots":b,"ask_lots":a,
+                       "imbalance":round((b-a)/denom,5) if denom else None})
+    scenarios={}
+    for quantity in (1,10,20,50,100):
+        scenarios[str(quantity)]={
+            "sell":simulate_depth(sides["bid"],quantity) if usable else None,
+            "buy":simulate_depth(sides["ask"],quantity) if usable else None
+        }
+    return {"instrument":symbol+"@"+board,"kind":ident["kind"],
+            "quote_unit":"% of residual nominal (without accrued interest)" if ident["kind"]=="bond" else "RUB/share",
+            "snapshot":{k:v for k,v in latest.items() if k!="id"},
+            "levels":sides,"series":series,"simulation":scenarios,
+            "executable_quality":usable,
+            "warning":"Simulation consumes displayed depth only. No tax, coupons, fees, slippage, hidden liquidity or market impact. Sandbox execution differs from exchange."}
+
+
 class LocalHandler(BaseHTTPRequestHandler):
     server_version="SandboxMarketDashboard/1.0"
 
@@ -144,6 +233,19 @@ class LocalHandler(BaseHTTPRequestHandler):
                 self.send_data(503,"text/plain; charset=utf-8",b"dashboard.js not installed")
                 return
             self.send_data(200,"text/javascript; charset=utf-8",content.read_bytes())
+            return
+        if p.path=="/api/book":
+            try:
+                q=parse_qs(p.query)
+                symbol=q.get("symbol",["SBER"])[0]
+                board=q.get("board",["TQBR"])[0]
+                hours=int(q.get("hours",["24"])[0])
+                payload=depth_data(self.server.database_path,symbol,board,hours)
+                self.send_data(200,"application/json; charset=utf-8",
+                    json.dumps(payload,ensure_ascii=False,separators=(",",":")).encode("utf-8"))
+            except (ValueError,FileNotFoundError,sqlite3.Error):
+                self.send_data(400,"application/json; charset=utf-8",
+                    b'{"error":"invalid_request"}')
             return
         if p.path=="/api/market":
             try:
