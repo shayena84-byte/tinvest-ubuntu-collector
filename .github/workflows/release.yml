@@ -1,4 +1,4 @@
-name: Test and publish v1.0 archive
+name: Test and publish v1.1 archive
 on:
   push:
     branches: [main]
@@ -18,13 +18,13 @@ jobs:
 
       - name: Run offline tests
         run: |
-          python3 -m py_compile collector.py
+          python3 -m py_compile collector.py sandbox.py
           python3 -m unittest discover -s tests -v
 
       - name: Build installer ZIP
         run: |
           mkdir -p /tmp/tinvest_ubuntu_collector
-          cp collector.py install.sh README.md /tmp/tinvest_ubuntu_collector/
+          cp collector.py sandbox.py install.sh README.md /tmp/tinvest_ubuntu_collector/
           cp -r tests /tmp/tinvest_ubuntu_collector/
           cd /tmp
           zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
@@ -33,8 +33,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.0 >/dev/null 2>&1; then
-            gh release upload v1.0 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.1 >/dev/null 2>&1; then
+            gh release upload v1.1 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.0" --notes "Read-only Ubuntu collector: source, installer and offline unit tests. Requires a read-only T-Invest API token."
+            gh release create v1.1 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.1" --notes "Read-only collector with isolated T-Invest Sandbox support. No real trading calls."
           fi
