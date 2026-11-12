@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.3.4
+# T-Invest Ubuntu Collector v1.4.0
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -270,6 +270,34 @@ bash install_ai_agent.sh
 ~~~
 
 Ограничение: доступность биржевых данных в Sandbox проверяется на вашем сервере; автоматические тесты эмулируют ответы API. Реальные покупки по-прежнему запрещены кодом. Региональное ограничение OpenAI API остаётся отдельным вопросом.
+
+## v1.4.0 — непрерывная история котировок и стаканов в SQLite
+
+Добавлен отдельный **Sandbox Market Recorder**. Каждые 5 минут он через настроенный SOCKS5 192.168.202.50:1080 получает биржевые котировки SBER/TQBR и Омега БО-01/TQCB, сохраняет 10 уровней bid/ask и метрики ликвидности в приватную SQLite-базу на Ubuntu.
+
+Это **не торговый бот**: никаких операций покупки/продажи, OpenAI API и доступа к Production. AI-таймер по-прежнему отключён.
+
+Установка:
+
+~~~bash
+cd ~
+wget -O tinvest_ubuntu_collector_v1.4.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.4.0/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.4.0.zip
+cd tinvest_ubuntu_collector
+bash install_market_recorder.sh
+sudo loginctl enable-linger "$(whoami)"
+~~~
+
+Контроль:
+
+~~~bash
+systemctl --user list-timers 'tinvest-sandbox-market*'
+journalctl --user -u tinvest-sandbox-market.service -n 60 --no-pager
+python3 ~/tinvest-collector/market_recorder.py report --hours 24
+python3 ~/tinvest-collector/market_recorder.py export --hours 168
+~~~
+
+Подробная инструкция, схема SQLite, правила точности и расширение инструментов — [MARKET_RECORDER.md](MARKET_RECORDER.md).
 
 ## Ограничения
 
