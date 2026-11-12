@@ -1,4 +1,4 @@
-name: Test and publish v1.4.0 archive
+name: Test and publish v1.5.0 archive
 on:
   push:
     branches: [main]
@@ -15,6 +15,12 @@ on:
       - "tests/test_market_recorder.py"
       - "install_market_recorder.sh"
       - "MARKET_RECORDER.md"
+      - "market_dashboard.py"
+      - "dashboard.html"
+      - "dashboard.js"
+      - "install_market_quality.sh"
+      - "MARKET_QUALITY_DASHBOARD.md"
+      - "tests/test_market_dashboard.py"
   workflow_dispatch:
 
 permissions:
@@ -29,14 +35,15 @@ jobs:
 
       - name: Run offline tests
         run: |
-          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py
-          bash -n install_market_recorder.sh
+          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py market_dashboard.py
+          bash -n install_market_recorder.sh install_market_quality.sh
+          node --check dashboard.js
           python3 -m unittest discover -s tests -v
 
       - name: Build installer ZIP
         run: |
           mkdir -p /tmp/tinvest_ubuntu_collector
-          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh README.md MARKET_RECORDER.md /tmp/tinvest_ubuntu_collector/
+          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md /tmp/tinvest_ubuntu_collector/
           cp -r tests /tmp/tinvest_ubuntu_collector/
           cd /tmp
           zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
@@ -45,8 +52,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.4.0 >/dev/null 2>&1; then
-            gh release upload v1.4.0 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.5.0 >/dev/null 2>&1; then
+            gh release upload v1.5.0 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.4.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.4.0" --notes "Add secure 5-minute Sandbox market historian: quotes, 10-level order books, SQLite, systemd."
+            gh release create v1.5.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.5.0" --notes "Add quality-aware SQLite migration, book anomalies, corrected orderbookTs and loopback market dashboard."
           fi
