@@ -88,7 +88,7 @@ function drawChart(id,rows,series,opts) {
   if(min===max){const delta=Math.max(Math.abs(max)*.008,.005);min-=delta;max+=delta}
   else {const delta=(max-min)*.10;min-=delta;max+=delta}
   const minT=Math.min(...data.map(p=>p.ts)),maxT=Math.max(...data.map(p=>p.ts));
-  const scaleX=ts=>left+(maxT===minT?.5:(ts-minT)/(maxT-minT))*(width-left-right);
+  const scaleX=ts=>left+(maxT===minT ? 0.5 : (ts-minT)/(maxT-minT))*(width-left-right);
   const scaleY=v=>top+(max-v)/(max-min)*(height-top-bottom);
   const svg=svgNode("svg",{viewBox:"0 0 "+width+" "+height,
                            role:"img","aria-label":opts.label||"Временной график"});
