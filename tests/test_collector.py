@@ -53,6 +53,16 @@ class TestCollector(unittest.TestCase):
             rows, truncated=C.cursor_operations(Fake(),'acc','start','end',b'\x02'*32)
         self.assertEqual(len(rows),2)
         self.assertFalse(truncated)
+    def test_http400_details_are_sanitized(self):
+        from urllib.error import HTTPError
+        message=b'{"code":"INVALID_ARGUMENT","message":"invalid candle window"}'
+        def invalid(req,timeout):
+            raise HTTPError(req.full_url,400,"Bad Request",{},io.BytesIO(message))
+        api=C.API("DUMMYSECRET",opener=invalid)
+        with self.assertRaises(C.APIError) as err:
+            api.call("accounts",{})
+        self.assertIn("invalid candle window",str(err.exception))
+        self.assertNotIn("DUMMYSECRET",str(err.exception))
     def test_portfolio_transform(self):
         raw={'accountId':'123secret','totalAmountPortfolio':{'currency':'rub','units':'1000','nano':0},'positions':[{'instrumentUid':'uid1','quantity':{'units':'10','nano':0},'currentPrice':{'currency':'rub','units':'100','nano':0}}]}
         p=C.portfolio_transform(raw)
