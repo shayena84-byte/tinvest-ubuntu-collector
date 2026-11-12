@@ -22,6 +22,8 @@ done
 
 echo "ШАГ 1. Резервное копирование и обновление локального рыночного дашборда..."
 bash "$ROOT/install_market_quality.sh"
+# Existing enabled service otherwise keeps the OLD Python HTTP code in memory.
+systemctl --user restart tinvest-sandbox-dashboard.service
 
 echo "ШАГ 2. Добавление мониторинга дополнительных акций и облигаций..."
 python3 - "$CONF/market-recorder.json" <<'PY'
