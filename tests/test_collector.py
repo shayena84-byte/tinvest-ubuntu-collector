@@ -92,6 +92,59 @@ class TestCollector(unittest.TestCase):
         with self.assertRaises(C.APIError):
             C.quote_instrument(Fake(),"RU000A1092T7")
 
+    def test_omega_isin_selects_tqcb_and_validates_uid(self):
+        class Fake:
+            def __init__(self):
+                self.requests=[]
+            def call(self, method, payload):
+                self.requests.append((method, payload))
+                if method == "find":
+                    return {"instruments": [
+                        {"name":"Омега БО-01","ticker":"RU000A1092T7","isin":"RU000A1092T7",
+                         "classCode":"OCBR","uid":"other-uid"},
+                        {"name":"Омега БО-01","ticker":"RU000A1092T7","isin":"RU000A1092T7",
+                         "classCode":"TQCB","uid":"f05f8816-f4fe-465d-b5fe-1a81d65154c6"},
+                        {"name":"Омега БО-01","ticker":"RU000A1092T7","isin":"RU000A1092T7",
+                         "classCode":"PTOB","uid":"another-uid"}]}
+                if method == "instrument":
+                    self.assert_uid = payload["id"]
+                    return {"instrument": {"uid":payload["id"],"ticker":"RU000A1092T7",
+                            "isin":"RU000A1092T7","classCode":"TQCB","name":"Омега БО-01"}}
+                raise AssertionError("Unexpected API method")
+        fake=Fake()
+        inst=C.quote_instrument(fake,"RU000A1092T7")
+        self.assertEqual(inst["classCode"],"TQCB")
+        self.assertEqual(fake.assert_uid,"f05f8816-f4fe-465d-b5fe-1a81d65154c6")
+
+    def test_omega_explicit_board_and_fail_closed(self):
+        class Fake:
+            def call(self, method, payload):
+                if method=="find":
+                    return {"instruments":[
+                        {"ticker":"RU000A1092T7","isin":"RU000A1092T7",
+                         "classCode":"TQCB","uid":"bond-main"},
+                        {"ticker":"RU000A1092T7","isin":"RU000A1092T7",
+                         "classCode":"PTOB","uid":"bond-other"}]}
+                if method=="instrument":
+                    # Test wrong class/ISIN returned by instrument lookup:
+                    return {"instrument":{"uid":payload["id"],"isin":"RU000A1092T7",
+                                          "classCode":"TQCB"}}
+                raise AssertionError("Unexpected method")
+        with self.assertRaises(C.APIError):
+            C.quote_instrument(Fake(),"RU000A1092T7",board="PTOB")
+        with self.assertRaises(C.APIError):
+            C.quote_instrument(Fake(),"RU000A1092T7",board="INVALID_BOARD")
+
+    def test_quote_unknown_board_requires_explicit_choice(self):
+        class Fake:
+            def call(self, method, payload):
+                if method=="find":
+                    return {"instruments":[
+                        {"ticker":"BND","isin":"RU000A1092T7","classCode":"PTOB","uid":"bond1"}]}
+                raise AssertionError("No follow-up call expected")
+        with self.assertRaises(C.APIError):
+            C.quote_instrument(Fake(),"RU000A1092T7")
+
     def test_portfolio_transform(self):
         raw={'accountId':'123secret','totalAmountPortfolio':{'currency':'rub','units':'1000','nano':0},'positions':[{'instrumentUid':'uid1','quantity':{'units':'10','nano':0},'currentPrice':{'currency':'rub','units':'100','nano':0}}]}
         p=C.portfolio_transform(raw)
