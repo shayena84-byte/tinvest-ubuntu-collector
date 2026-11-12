@@ -100,7 +100,7 @@ def ai_config():
         raise c.APIError("Некорректный список инструментов")
     if not set(cfg["watchlist"]).issubset(t.TRADABLE):
         raise c.APIError("Торговая вселенная содержит запрещённые инструменты")
-    if not cfg["model"].startswith("gpt-"):
+    if not (isinstance(cfg["model"],str) and cfg["model"].startswith("gpt-")):
         raise c.APIError("Неподдерживаемая модель")
     for k in ("minimum_confidence","max_trade_fraction","max_exposure_fraction","max_daily_loss_fraction"):
         if not 0<float(cfg[k])<1:
@@ -172,7 +172,7 @@ def ask_openai(key, model, snapshot):
         "reasoning":{"effort":"medium"},
         "text":{"format":{"type":"json_schema","name":"sandbox_trade_decision","strict":True,
                          "schema":RESPONSE_SCHEMA}},
-        "max_output_tokens":1500,
+        "max_output_tokens":2400,
         "store":False
     }
     req=Request("https://api.openai.com/v1/responses",
@@ -301,7 +301,7 @@ def run(dry_run=False):
     if not isinstance(old_cfg["account_ref"],str):
         raise c.APIError("Некорректная учётная запись песочницы")
     key=read_key()
-    api=s.SandboxAPI(c.token_read())
+    api=t.s.SandboxAPI(c.token_read())
     account_id=t.get_account(api,old_cfg["account_ref"])
     st=init_ai_state(t.load_json(t.STATE_FILE,{}),now)
     # Existing unverified orders block new trades.
