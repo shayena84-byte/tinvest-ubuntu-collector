@@ -72,6 +72,24 @@ def _quality(cfg, context, now):
     return shared.gate_by_quality(context, cfg, now)
 
 
+def session_status():
+    """Read current per-instrument trading availability without calling OpenAI.
+
+    Uses Sandbox MarketDataService/GetTradingStatus through exact TQBR UIDs.
+    Safe to run at any time, including evening sessions and holidays.
+    """
+    if c.TOKEN_PATH.name != "sandbox-token":
+        raise c.APIError("Production token rejected: Sandbox only")
+    cfg = config()
+    api = t.s.SandboxAPI(c.token_read())
+    active, details = session.open_watchlist(api, cfg["watchlist"])
+    for item in details:
+        print(("%s OPEN" if item["allowed"] else "%s CLOSED") % item["symbol"],
+              "-", item["reason"])
+    print("Подтверждено доступных инструментов:", len(active))
+    return 1 if details and all(x["reason"] == "status_probe_error" for x in details) else 0
+
+
 def one_cycle(dry_run=False):
     now = datetime.now(timezone.utc)
     cfg = config()
@@ -204,11 +222,12 @@ def one_cycle(dry_run=False):
 
 def main():
     p = argparse.ArgumentParser(description="OpenAI API decision engine - T-Invest Sandbox ONLY")
-    p.add_argument("action", choices=("doctor","status","dry-run","run"))
+    p.add_argument("action", choices=("doctor","status","session","dry-run","run"))
     action = p.parse_args().action
     try:
         if action == "doctor": return doctor()
         if action == "status": return status()
+        if action == "session": return session_status()
         return one_cycle(dry_run=(action == "dry-run"))
     except (c.APIError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
         # Secrets are never logged. Broker/API errors already use sanitized messages.
