@@ -84,6 +84,33 @@ class TestMarketDashboard(unittest.TestCase):
         self.assertNotIn("accountId",data)
         self.assertNotIn("Bearer",data)
 
+    def test_depth_simulator_partial_fills_and_vwap(self):
+        levels=[{"price":"45.21","lots":7},{"price":"45.20","lots":10},
+                {"price":"45.18","lots":1},{"price":"45.10","lots":6}]
+        result=dashboard.simulate_depth(levels,20)
+        self.assertEqual(result["filled_lots"],20)
+        self.assertEqual(result["unfilled_lots"],0)
+        self.assertEqual(result["average_quote"],"45.192500")
+        long=dashboard.simulate_depth(levels,50)
+        self.assertEqual(long["unfilled_lots"],26)
+        self.assertEqual(long["filled_lots"],24)
+
+    def test_depth_api_quality_gate_and_imbalance(self):
+        self.record("299.60","299.61",self.now)
+        data=dashboard.depth_data(self.db,"SBER","TQBR",24,now=self.now+timedelta(seconds=15))
+        self.assertTrue(data["executable_quality"])
+        self.assertEqual(len(data["levels"]["bid"]),1)
+        self.assertEqual(data["simulation"]["20"]["sell"]["filled_lots"],20 if False else 20)
+        # Data setup: one level of 100 lots, one level of 80 lots, enough for 20.
+        self.assertEqual(len(data["series"]),1)
+        self.assertAlmostEqual(data["series"][0]["imbalance"],(100-80)/(100+80),places=4)
+
+    def test_invalid_depth_disables_execution_estimate(self):
+        self.record("299.78","299.63",self.now)
+        data=dashboard.depth_data(self.db,"SBER","TQBR",24,now=self.now+timedelta(seconds=1))
+        self.assertFalse(data["executable_quality"])
+        self.assertIsNone(data["simulation"]["20"]["sell"])
+
     def test_html_and_js_exist_and_are_dependency_free(self):
         html=(Path(__file__).resolve().parents[1]/"dashboard.html").read_text("utf-8")
         js=(Path(__file__).resolve().parents[1]/"dashboard.js").read_text("utf-8")
