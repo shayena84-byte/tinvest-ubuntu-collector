@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.1
+# T-Invest Ubuntu Collector v1.2
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -74,6 +74,48 @@ SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-c
 Архивы Sandbox сохраняются отдельно в `~/tinvest-reports/sandbox/`. Данные песочницы не являются реальными позициями брокерского счёта. Торговых методов даже в Sandbox в сборщике нет: только чтение, создание и виртуальное пополнение счёта.
 
 Официальная документация: https://developer.tbank.ru/invest/intro/developer/sandbox/.
+
+## Автоматическая торговля в Sandbox каждые 5 минут (v1.2)
+
+**Экспериментальная стратегия.** Используется только виртуальный счёт, привязанный к Sandbox-токену; никакого доступа к реальным деньгам или заявкам. Это программный алгоритм EMA(9/21) + RSI(14) + импульс за 30 минут, а не непрерывное управление сделками моделью ChatGPT. Он может не заработать, не торговать при отсутствии сигналов или потерять все виртуальные деньги.
+
+Для установки обновлённого пакета скачайте релиз v1.2 и запустите установщик **от обычного пользователя Ubuntu**, указав обезличенный номер Sandbox-счёта:
+
+~~~bash
+cd ~
+wget -O tinvest_ubuntu_collector_v1.2.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.2/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.2.zip
+cd tinvest_ubuntu_collector
+bash install_autotrader.sh tb_3dcf45aba0ff
+~~~
+
+Установщик делает offline-тесты, копирует код в \`~/tinvest-collector\`, создаёт приватную конфигурацию \`~/.config/tinvest-readonly/autotrader.json\` и активирует \`systemd --user\` timer с интервалом 5 минут. Он **не переносит** токен в GitHub. Используется существующий файл \`~/.config/tinvest-readonly/sandbox-token\` и индивидуальный TLS bundle.
+
+Чтобы таймер продолжал работать после выхода из SSH:
+
+~~~bash
+sudo loginctl enable-linger "$(whoami)"
+~~~
+
+Диагностика:
+
+~~~bash
+systemctl --user list-timers 'tinvest-sandbox-*'
+journalctl --user -u tinvest-sandbox-autotrader.service -n 60 --no-pager
+python3 ~/tinvest-collector/sandbox_autotrader.py status
+~~~
+
+**Сразу остановить автоматическую торговлю:**
+
+~~~bash
+systemctl --user disable --now tinvest-sandbox-autotrader.timer
+~~~
+
+Дополнительное выключение — изменить \`"enabled": false\` в файле \`~/.config/tinvest-readonly/autotrader.json\`.
+
+Общая схема ограничений: только ликвидные рублёвые акции \`SBER\`, \`MOEX\`, \`YDEX\`; не более 42% текущего капитала в одной новой позиции, общий лимит 82%, денежный резерв от 850 ₽, не более 8 заявок в день, пауза после 8% дневной просадки, стоп-лосс 2,5%, фиксация прибыли 4,5%, трейлинг-стоп 2,5%, минимальный интервал между заявками 20 минут. Торговля по умолчанию ограничена рабочими днями и временем 10:10–18:35 МСК. Скрипт может совершать 0 сделок за день, если условия не выполнены.
+
+Состояние и журналы хранятся локально в \`~/.local/state/tinvest-sandbox-trader/\`. Скрипт не допускает новых сделок при неизвестном результате предыдущей заявки. Песочница исполняет рыночные заявки по последней биржевой сделке, моделирует комиссию 0,05% и **не** начисляет купоны/дивиденды. Результаты в Sandbox не гарантируют доходности на реальном рынке.
 
 ## Ограничения
 
