@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.6.0
+# T-Invest Ubuntu Collector v1.7.0
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -339,6 +339,24 @@ bash install_v1_6.sh
 Если Ollama отсутствует, торговый таймер не запускается; сначала установите и загрузите локальную модель. Полная инструкция и ограничения: [V1_6_AUTONOMOUS_SANDBOX.md](V1_6_AUTONOMOUS_SANDBOX.md).
 
 Это экспериментальная система: не гарантирует доходность, не заменяет решения профессионального управляющего и не затрагивает реальные деньги.
+
+## v1.7.0 — OpenAI Responses API основной движок для Sandbox
+
+Версия **v1.7.0** использует уже сохранённый OpenAI API-ключ вместо обязательной Ollama. Система анализирует инструменты, пропускает неподтверждённые/устаревшие стаканы, обрабатывает структурированные ответы OpenAI и при выполнении всех лимитов отправляет только **виртуальные Sandbox-заявки**. Все улучшения дашборда из v1.6.0 сохраняются.
+
+Обновление:
+
+~~~bash
+cd ~
+wget -O tinvest_ubuntu_collector_v1.7.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.7.0/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.7.0.zip
+cd tinvest_ubuntu_collector
+bash install_openai_backend.sh
+~~~
+
+Существующий ключ ~/.config/tinvest-readonly/openai-api-key используется автоматически; Ollama не нужна. Установщик делает резервную копию SQLite, обновляет UI, отключает прежние торговые таймеры и проверяет выбранную модель OpenAI. Если доступ подтверждён, включается только таймер tinvest-sandbox-openai.timer.
+
+Документация: [V1_7_OPENAI_SANDBOX.md](V1_7_OPENAI_SANDBOX.md). Региональная и проектная доступность OpenAI API определяется действующими условиями провайдера, и установка не обходит такие ограничения.
 
 ## Ограничения
 
