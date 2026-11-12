@@ -29,7 +29,7 @@ DB_DIR = Path.home() / ".local" / "share" / "tinvest-market"
 DB_PATH = DB_DIR / "market.sqlite3"
 EXPORT_DIR = Path.home() / "tinvest-reports" / "market"
 READ_METHODS = frozenset({"find", "instrument", "last", "book"})
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_CONFIG = {
     "depth": 10,
     "instruments": [
@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
     asks_total INTEGER NOT NULL DEFAULT 0,
     book_stale_seconds INTEGER,
     last_stale_seconds INTEGER,
+    quality_status TEXT NOT NULL DEFAULT 'unverified',
+    quality_reason TEXT NOT NULL DEFAULT 'not_checked',
     UNIQUE(uid, slot_utc)
 );
 CREATE TABLE IF NOT EXISTS book_levels (
@@ -87,6 +89,14 @@ CREATE TABLE IF NOT EXISTS fetch_errors (
     safe_message TEXT NOT NULL,
     PRIMARY KEY(symbol, board, slot_utc)
 );
+CREATE TABLE IF NOT EXISTS anomalies (
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK(status IN ('invalid','stale','unverified')),
+    reason TEXT NOT NULL,
+    detected_utc TEXT NOT NULL,
+    PRIMARY KEY(snapshot_id, reason)
+);
+CREATE INDEX IF NOT EXISTS idx_anomalies_time ON anomalies(detected_utc);
 CREATE INDEX IF NOT EXISTS idx_snapshots_uid_time ON snapshots(uid, collected_utc);
 CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots(collected_utc);
 """
@@ -202,12 +212,13 @@ def normalize_payload(instrument, last_resp, book_resp, depth, now):
     if lp is not None and lp <= 0:
         lp = None
     last_trade = iso(last_row.get("time")) if last_row else None
-    book_time = iso(book_resp.get("time"))
+    # REST GetOrderBook uses orderbookTs; streaming orderbooks may use time.
+    book_time = iso(book_resp.get("orderbookTs") or book_resp.get("time"))
     bids = clean_levels(book_resp.get("bids"), True, depth)
     asks = clean_levels(book_resp.get("asks"), False, depth)
     best_bid = bids[0][0] if bids else None
     best_ask = asks[0][0] if asks else None
-    return {
+    result = {
         "last_price": str(lp) if lp is not None else None,
         "last_trade_utc": last_trade,
         "book_time_utc": book_time,
@@ -223,6 +234,34 @@ def normalize_payload(instrument, last_resp, book_resp, depth, now):
         "bids": bids,
         "asks": asks,
     }
+    quality, reason = classify_snapshot(result, now)
+    result["quality_status"] = quality
+    result["quality_reason"] = reason
+    return result
+
+
+def classify_snapshot(payload, now):
+    """Only 'valid' may feed reliable liquidity statistics or execution estimates."""
+    bid = decimal_quote(payload.get("best_bid"))
+    ask = decimal_quote(payload.get("best_ask"))
+    if bid is not None and ask is not None and bid >= ask:
+        return "invalid", "crossed_or_locked_book"
+    if bid is None or ask is None or not payload.get("bids") or not payload.get("asks"):
+        return "unverified", "missing_book_side_or_price"
+    timestamp = payload.get("book_time_utc")
+    if not timestamp:
+        return "unverified", "orderbook_timestamp_missing"
+    try:
+        book_at = datetime.fromisoformat(timestamp)
+    except (ValueError, TypeError):
+        return "unverified", "orderbook_timestamp_invalid"
+    if book_at - now > timedelta(minutes=2):
+        return "unverified", "orderbook_timestamp_in_future"
+    age = (now - book_at).total_seconds()
+    if age > 900:
+        return "stale", "orderbook_older_than_15m"
+    # Do not discard illiquid bonds just because the last trade is old.
+    return "valid", "ok"
 
 
 def load_config():
@@ -268,8 +307,26 @@ def connect(db_path=DB_PATH):
         db.executescript(SCHEMA)
         with db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, SCHEMA_VERSION):
+            if version not in (0, 1, SCHEMA_VERSION):
                 raise RecorderError(f"Неподдерживаемая версия схемы БД: {version}")
+            if version == 1:
+                # In-place upgrade; preserve all existing snapshots and order-book levels.
+                db.execute("ALTER TABLE snapshots ADD COLUMN quality_status TEXT NOT NULL DEFAULT 'unverified'")
+                db.execute("ALTER TABLE snapshots ADD COLUMN quality_reason TEXT NOT NULL DEFAULT 'historical_unverified'")
+                db.execute("""UPDATE snapshots
+                              SET quality_status='invalid',
+                                  quality_reason='crossed_or_locked_book'
+                              WHERE best_bid IS NOT NULL AND best_ask IS NOT NULL
+                                AND CAST(best_bid AS REAL)>=CAST(best_ask AS REAL)""")
+                db.execute("""UPDATE snapshots
+                              SET quality_status='stale',
+                                  quality_reason='orderbook_older_than_15m'
+                              WHERE quality_status!='invalid' AND book_stale_seconds > 900""")
+                db.execute("""INSERT OR IGNORE INTO anomalies
+                            (snapshot_id,status,reason,detected_utc)
+                            SELECT id,quality_status,quality_reason,collected_utc
+                            FROM snapshots WHERE quality_status!='valid'""")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_quality ON snapshots(quality_status, collected_utc)")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         os.chmod(db_path, 0o600)
     finally:
@@ -285,7 +342,7 @@ def store_snapshot(db, instrument, row, now):
         instrument["uid"], slot, fetched_at, row["last_price"], row["last_trade_utc"],
         row["book_time_utc"], row["best_bid"], row["best_ask"], row["spread_pct"],
         row["bid_top_lots"], row["ask_top_lots"], row["bids_total"], row["asks_total"],
-        row["book_stale_seconds"], row["last_stale_seconds"]
+        row["book_stale_seconds"], row["last_stale_seconds","quality_status","quality_reason"]
     )
     with db:
         db.execute("""INSERT INTO instruments
@@ -316,6 +373,13 @@ def store_snapshot(db, instrument, row, now):
              last_stale_seconds=excluded.last_stale_seconds""", params)
         snap = db.execute("SELECT id FROM snapshots WHERE uid=? AND slot_utc=?",
                           (instrument["uid"], slot)).fetchone()[0]
+        db.execute("UPDATE snapshots SET quality_status=?, quality_reason=? WHERE id=?",
+                   (row["quality_status"], row["quality_reason"], snap))
+        db.execute("DELETE FROM anomalies WHERE snapshot_id=?", (snap,))
+        if row["quality_status"] != "valid":
+            db.execute("""INSERT INTO anomalies(snapshot_id,status,reason,detected_utc)
+                          VALUES (?,?,?,?)""",
+                       (snap,row["quality_status"],row["quality_reason"],fetched_at))
         db.execute("DELETE FROM book_levels WHERE snapshot_id=?", (snap,))
         for side, values in (("bid",row["bids"]),("ask",row["asks"])):
             db.executemany("""INSERT INTO book_levels(snapshot_id,side,level,price,lots)
@@ -384,8 +448,7 @@ def collect(api=None, db_path=DB_PATH, config=None, now=None):
                 inst,row=read_one(api,spec,cfg["depth"],now)
                 store_snapshot(db,inst,row,now)
                 okay+=1
-                status="stale" if (row["book_stale_seconds"] is None
-                      or row["book_stale_seconds"]>900) else "fresh"
+                status=row["quality_status"] + "/" + row["quality_reason"]
                 print(f"{spec['symbol']} ({inst['board']}): "
                       f"last={row['last_price'] or '—'}, "
                       f"bid={row['best_bid'] or '—'}, ask={row['best_ask'] or '—'}, "
@@ -434,21 +497,28 @@ def report(db_path=DB_PATH, hours=24):
         print("За выбранный период нет успешных замеров.")
     for (ticker,board),rows in by_key.items():
         first,last=rows[0],rows[-1]
-        spreads=[r["spread_pct"] for r in rows if r["spread_pct"] is not None]
+        qualified=[r for r in rows if r["quality_status"]=="valid"]
+        spreads=[r["spread_pct"] for r in qualified if r["spread_pct"] is not None]
+        statuses={k:sum(r["quality_status"]==k for r in rows)
+                  for k in ("valid","stale","unverified","invalid")}
         print(f"\n{ticker} [{board}] — {len(rows)} уникальных 5-минутных записей")
-        print(f"  Последний замер: {last['collected_utc']}")
+        print(f"  Последний замер: {last['collected_utc']} | качество: "
+              f"{last['quality_status']} ({last['quality_reason']})")
+        print(f"  Качество за период: {statuses}")
         print(f"  Последняя сделка: {last['last_price'] or '—'}; "
               f"best bid/ask: {last['best_bid'] or '—'} / {last['best_ask'] or '—'}")
         print(f"  Объём первых 10 уровней (лоты): "
               f"{last['bids_total']} / {last['asks_total']}")
-        print(f"  Медианный спред: "
+        print(f"  Медианный спред (только пригодные): "
               f"{round(statistics.median(spreads),3) if spreads else '—'}%")
         print(f"  Возраст последнего стакана: "
               f"{last['book_stale_seconds'] if last['book_stale_seconds'] is not None else 'неизвестен'} с")
-        if first["last_price"] and last["last_price"]:
-            a,b=Decimal(first["last_price"]),Decimal(last["last_price"])
+        if len(qualified) >= 2 and qualified[0]["last_price"] and qualified[-1]["last_price"]:
+            a,b=Decimal(qualified[0]["last_price"]),Decimal(qualified[-1]["last_price"])
             if a>0:
-                print(f"  Изменение последней цены за период: {((b-a)/a*100):.3f}%")
+                print(f"  Изменение подтверждённой цены: {((b-a)/a*100):.3f}%")
+        else:
+            print("  Динамика подтверждённой цены: недостаточно пригодных снимков")
     if failures:
         print("\nПоследние ошибки сбора (могут относиться к предыдущим периодам):")
         for x in failures:
