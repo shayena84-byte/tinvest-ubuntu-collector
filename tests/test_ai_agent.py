@@ -67,6 +67,22 @@ class TestAIAgent(unittest.TestCase):
         self.assertIsNone(trade)
         self.assertEqual(why,"HOLD")
 
+    def test_openai_403_safe_diagnostics(self):
+        from urllib.error import HTTPError
+        from io import BytesIO
+        body=b'{"error":{"type":"invalid_request_error","code":"unsupported_country_region_territory","message":"secret-user-contact@example.net"}}'
+        e=HTTPError("https://api.openai.com/v1/responses",403,"Forbidden",{},BytesIO(body))
+        output=agent.safe_api_error(e)
+        self.assertIn("HTTP 403",output)
+        self.assertIn("unsupported_country_region_territory",output)
+        self.assertNotIn("secret-user-contact",output)
+
+    def test_openai_403_invalid_body(self):
+        from urllib.error import HTTPError
+        from io import BytesIO
+        e=HTTPError("https://api.openai.com/v1/responses",403,"Forbidden",{},BytesIO(b"unparseable HTML body"))
+        self.assertEqual(agent.safe_api_error(e),"HTTP 403")
+
     def test_api_daily_limit(self):
         with patch.object(agent,'read_key',return_value="sk-test"),patch.object(agent.t,'market_hours',return_value=False):
             self.assertIsNone(agent.run(dry_run=True))
