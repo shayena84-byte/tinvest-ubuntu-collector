@@ -1,4 +1,4 @@
-name: Test and publish v1.3.1 archive
+name: Test and publish v1.3.2 archive
 on:
   push:
     branches: [main]
@@ -40,8 +40,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.3.1 >/dev/null 2>&1; then
-            gh release upload v1.3.1 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.3.2 >/dev/null 2>&1; then
+            gh release upload v1.3.2 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.3.1 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.3.1" --notes "AI Sandbox agent GetCandles hotfix; validated offline, no production trading."
+            gh release create v1.3.2 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.3.2" --notes "OpenAI API 403 structured diagnostics for Sandbox-only model trader; no production orders."
           fi
