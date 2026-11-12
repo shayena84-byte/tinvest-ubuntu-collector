@@ -367,27 +367,54 @@ def snapshot(api, days, acc_filter=None, no_ops=False, no_instruments=False):
     return output
 
 
-def quote(api, search, depth=10):
+def quote_instrument(api, search):
+    """Choose a precise instrument. For ordinary equity tickers prefer TQBR lookup.
+
+    Same ticker/ISIN may be returned under several venues with different UIDs.
+    Never guess one from an unfiltered list.
+    """
+    symbol = search.strip().upper()
+    # Ticker+classCode is unique for the main Moscow Exchange equity board.
+    if symbol in {"SBER", "MOEX", "YDEX", "ROSN", "LKOH", "NVTK", "T", "VTBR", "TATN", "SBERP", "GAZP", "GMKN", "PLZL", "POSI", "DOMRF"}:
+        resp = api.call("instrument", {
+            "idType": "INSTRUMENT_ID_TYPE_TICKER",
+            "classCode": "TQBR",
+            "id": symbol,
+        })
+        inst = resp.get("instrument") or {}
+        if (str(inst.get("ticker", "")).upper() != symbol
+                or str(inst.get("classCode", "")).upper() != "TQBR"
+                or not inst.get("uid")):
+            raise APIError("Не удалось подтвердить UID акции " + symbol + " на доске TQBR")
+        return inst
+
     res = api.call("find", {"query": search})
     instruments = res.get("instruments", [])
-    candidates = [x for x in instruments if search.casefold() in {str(x.get(k, "")).casefold() for k in ("isin", "ticker", "uid", "figi")}]
+    candidates = [x for x in instruments if search.casefold() in
+                  {str(x.get(k, "")).casefold() for k in ("isin", "ticker", "uid", "figi")}]
     if not candidates:
         print("Точных совпадений не найдено. Ближайшие варианты:")
         for x in instruments[:10]:
             print(f"- {x.get('name','')} | {x.get('ticker','')} | {x.get('isin','')} | {x.get('uid','')}")
         raise APIError("Для запроса котировок используйте точный ISIN, UID или тикер")
     if len(candidates) > 1:
-        print("Найдено несколько совпадений — укажите UID конкретной бумаги:")
+        print("Найдено несколько совпадений — укажите UID и проверьте доску торгов:")
         for x in candidates:
-            print(f"- {x.get('name','')} | {x.get('ticker','')} | {x.get('isin','')} | {x.get('uid','')}")
-        raise APIError("Неоднозначный запрос")
-    inst = candidates[0]
+            print(f"- {x.get('name','')} | {x.get('ticker','')} | "
+                  f"{x.get('isin','')} | {x.get('classCode','')} | {x.get('uid','')}")
+        raise APIError("Неоднозначный запрос; выбор инструмента остановлен")
+    return candidates[0]
+
+
+def quote(api, search, depth=10):
+    inst = quote_instrument(api, search)
     uid = inst.get("uid") or inst.get("figi")
     if not uid:
         raise APIError("Для найденного инструмента не получен UID/FIGI")
     last = api.call("last", {"instrumentId": [uid]})
     book = api.call("book", {"instrumentId": uid, "depth": depth})
-    print(f"{inst.get('name','')} | {inst.get('ticker','')} | {inst.get('isin','')} | UID {uid}")
+    print(f"{inst.get('name','')} | {inst.get('ticker','')} | {inst.get('isin','')} | "
+          f"доска {inst.get('classCode','')} | UID {uid}")
     print("ВАЖНО: цена облигаций в API указана в % от ОСТАТОЧНОГО номинала, без НКД.")
     for p in last.get("lastPrices", []):
         print("Последняя цена:", val_quote(p.get("price")), "| время:", p.get("time", ""))
