@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.3
+# T-Invest Ubuntu Collector v1.3.1
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -166,6 +166,30 @@ systemctl --user disable --now tinvest-sandbox-ai.timer
 ### Почему модель, а не механические правила
 
 Программа снабжает модель выборкой свечей, EMA, RSI, динамикой двух часов, текущим портфелем и предыдущими рекомендациями; модель сама формирует конкретную торговую гипотезу и размер заявки. Технические индикаторы — исходные данные, но не условия автоматического входа. Независимый модуль валидации предотвращает операции с неразрешёнными инструментами, недоступными лотами и превышением лимитов.
+
+## Исправление ошибочного запроса GetCandles (v1.3.1)
+
+Если агент показывает `HTTP 400 для trader_candles`, обновите сборщик до v1.3.1. В запросе пятиминутных свечей теперь используется консервативное окно 36 часов вместо семи суток, убран необязательный параметр `candleSourceType`, добавлена безопасная диагностика текста ошибки без токена.
+
+**После установки автоматический таймер НЕ запускается**, пока не выполнен успешный однократный dry-run. Остановите его до обновления:
+
+```bash
+systemctl --user disable --now tinvest-sandbox-ai.timer
+cd ~
+wget -O tinvest_ubuntu_collector_v1.3.1.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.1/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.3.1.zip
+cd tinvest_ubuntu_collector
+bash install_ai_agent.sh
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/ai_sandbox_agent.py dry-run
+```
+
+Если в журнале появилась запись `ai_decision`, включите периодический запуск:
+
+```bash
+systemctl --user enable --now tinvest-sandbox-ai.timer
+```
+
+Если снова возникает HTTP 400, сохраните именно сообщение об ошибке после обновления: новый сборщик добавляет диагностическую информацию. Это ещё не подтверждённая реальным Sandbox проверка, потому что токен хранится исключительно на вашем Ubuntu.
 
 ## Ограничения
 
