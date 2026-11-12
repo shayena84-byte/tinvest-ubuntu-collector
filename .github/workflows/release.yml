@@ -4,6 +4,9 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/release.yml"
+      - "ai_sandbox_agent.py"
+      - "install_ai_agent.sh"
+      - "tests/test_ai_agent.py"
   workflow_dispatch:
 
 permissions:
