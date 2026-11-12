@@ -165,10 +165,13 @@ def last_quote(api, uid, now):
     return price
 
 def candles(api, uid, now):
-    frm=now-timedelta(days=7)
+    # Request a conservative ~36h window, not the 7-day upper bound.
+    # Avoid optional candleSourceType while checking Sandbox compatibility.
+    # The 5-minute API interval supports at most one week and up to 2400 candles.
+    frm=now-timedelta(hours=36)
     r=api.call("trader_candles", {"instrumentId": uid, "from": frm.isoformat(),
                   "to": now.isoformat(), "interval": "CANDLE_INTERVAL_5_MIN",
-                  "candleSourceType":"CANDLE_SOURCE_EXCHANGE", "limit": 1200})
+                  "limit": 400})
     rows=[]
     for x in r.get("candles",[]):
         if x.get("isComplete", False) and d(x.get("close")) > 0:
