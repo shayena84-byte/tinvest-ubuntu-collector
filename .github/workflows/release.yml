@@ -1,4 +1,4 @@
-name: Test and publish v1.6.0 archive
+name: Test and publish v1.7.0 archive
 on:
   push:
     branches: [main]
@@ -25,6 +25,10 @@ on:
       - "tests/test_ollama_sandbox_agent.py"
       - "install_v1_6.sh"
       - "V1_6_AUTONOMOUS_SANDBOX.md"
+      - "openai_quality_trader.py"
+      - "install_openai_backend.sh"
+      - "tests/test_openai_quality_trader.py"
+      - "V1_7_OPENAI_SANDBOX.md"
   workflow_dispatch:
 
 permissions:
@@ -39,15 +43,15 @@ jobs:
 
       - name: Run offline tests
         run: |
-          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py market_dashboard.py ollama_sandbox_agent.py
-          bash -n install_market_recorder.sh install_market_quality.sh install_v1_6.sh
+          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py market_dashboard.py ollama_sandbox_agent.py openai_quality_trader.py
+          bash -n install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh
           node --check dashboard.js
           python3 -m unittest discover -s tests -v
 
       - name: Build installer ZIP
         run: |
           mkdir -p /tmp/tinvest_ubuntu_collector
-          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py ollama_sandbox_agent.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh install_v1_6.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md V1_6_AUTONOMOUS_SANDBOX.md /tmp/tinvest_ubuntu_collector/
+          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py ollama_sandbox_agent.py openai_quality_trader.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md V1_6_AUTONOMOUS_SANDBOX.md V1_7_OPENAI_SANDBOX.md /tmp/tinvest_ubuntu_collector/
           cp -r tests /tmp/tinvest_ubuntu_collector/
           cd /tmp
           zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
@@ -56,8 +60,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.6.0 >/dev/null 2>&1; then
-            gh release upload v1.6.0 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.7.0 >/dev/null 2>&1; then
+            gh release upload v1.7.0 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.6.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.6.0" --notes "Add full-depth dashboard, simulations, imbalance, expanded market tracking and local Ollama AI for virtual Sandbox trades only."
+            gh release create v1.7.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.7.0" --notes "OpenAI Responses backend with existing API key; strict SQLite quality gates; Sandbox-only virtual orders. Ollama not required."
           fi
