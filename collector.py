@@ -111,7 +111,20 @@ class API:
                 if status in (429,500,502,503,504) and attempt < tries - 1:
                     time.sleep(2 ** attempt + 1)
                     continue
-                raise APIError(f"T-Invest API вернул HTTP {status} для {method}") from None
+                # Surface only the API error code and short validation message,
+                # never print request headers or the locally stored bearer token.
+                detail = ""
+                if status == 400:
+                    try:
+                        err = json.loads(exc.read(4096).decode("utf-8", "replace"))
+                        if isinstance(err, dict):
+                            msg = str(err.get("message") or err.get("error") or "")
+                            code = str(err.get("code") or "")
+                            detail = ("; " + code + " " + msg)[:400] if (code or msg) else ""
+                    except (ValueError, TypeError, UnicodeError):
+                        pass
+                    detail = detail.replace(self.token, "[REDACTED]")
+                raise APIError(f"T-Invest API вернул HTTP {status} для {method}{detail}") from None
             except (URLError, TimeoutError, socket.timeout):
                 if attempt < tries - 1:
                     time.sleep(2 ** attempt + 1)
