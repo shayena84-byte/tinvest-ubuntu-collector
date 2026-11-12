@@ -1,4 +1,4 @@
-# T-Invest Ubuntu Collector v1.3.1
+# T-Invest Ubuntu Collector v1.3.2
 
 Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
 
@@ -190,6 +190,29 @@ systemctl --user enable --now tinvest-sandbox-ai.timer
 ```
 
 Если снова возникает HTTP 400, сохраните именно сообщение об ошибке после обновления: новый сборщик добавляет диагностическую информацию. Это ещё не подтверждённая реальным Sandbox проверка, потому что токен хранится исключительно на вашем Ubuntu.
+
+## OpenAI API HTTP 403 — диагностика (v1.3.2)
+
+Если после исправления GetCandles появляется `Ошибка OpenAI API: HTTP 403`, значит T-Invest Sandbox запросы уже прошли, но модель не получила ответа. Причину нельзя определить по одному статусу — нужны машиночитаемые `error.type` и `error.code`. Версия v1.3.2 показывает только эти безопасные поля и **никогда не выводит токены, тело ответа или персональные данные**.
+
+```bash
+systemctl --user disable --now tinvest-sandbox-ai.timer
+cd ~
+wget -O tinvest_ubuntu_collector_v1.3.2.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.2/tinvest_ubuntu_collector.zip
+unzip -o tinvest_ubuntu_collector_v1.3.2.zip
+cd tinvest_ubuntu_collector
+bash install_ai_agent.sh
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/ai_sandbox_agent.py diagnose
+```
+
+Команда `diagnose` делает запрос **GET /v1/models/gpt-6.1-sol**, чтобы проверить доступ к модели без генерации ответа и без торговых операций. Если получаете `unsupported_country_region_territory`, проверьте официальную [географическую доступность API](https://help.openai.com/en/articles/5347006-openai-api-supported-countries-and-territories) и используйте только разрешённое размещение; не обходите региональные ограничения. Если `insufficient_permissions` или `invalid_api_key`, проверьте права API-проекта и созданный ключ на [OpenAI Platform](https://platform.openai.com/api-keys). Если доступ подтверждён, запустите `dry-run`, затем включите таймер:
+
+```bash
+SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/ai_sandbox_agent.py dry-run
+systemctl --user enable --now tinvest-sandbox-ai.timer
+```
+
+При `HTTP 403` **не включайте** таймер: он лишь будет повторять неуспешный вызов и не сможет торговать.
 
 ## Ограничения
 
