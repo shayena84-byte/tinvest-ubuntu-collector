@@ -1,0 +1,11 @@
+# Tokens and private reports must NEVER be committed
+.env
+.env.*
+token
+salt
+.config/
+tinvest-reports/
+*.zip
+__pycache__/
+*.py[cod]
+.pytest_cache/
