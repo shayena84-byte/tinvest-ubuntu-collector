@@ -18,24 +18,22 @@ def is_quota_error(message):
             "insufficient_quota" in msg)
 
 def block_status():
+    if not BLOCK_PATH.exists():
+        return {"blocked": False}
     try:
         data = json.loads(BLOCK_PATH.read_text(encoding="utf-8"))
-        if data.get("blocked") is True and data.get("reason") == "insufficient_quota":
-            return {"blocked": True, "reason": "insufficient_quota",
-                    "since_utc": data.get("since_utc")}
+        if isinstance(data, dict) and data.get("blocked") is True and data.get("reason") == "insufficient_quota":
+            return {"blocked": True, "reason": "insufficient_quota", "since_utc": data.get("since_utc")}
+        if isinstance(data, dict) and data.get("blocked") is False:
+            return {"blocked": False}
     except (OSError, ValueError, TypeError):
         pass
-    return {"blocked": False}
+    return {"blocked": True, "reason": "breaker_state_unverified"}
+
 
 def is_blocked():
-    # Fail closed if the private breaker file is unreadable or malformed.
-    if BLOCK_PATH.exists():
-        try:
-            return block_status()["blocked"] or not json.loads(
-                BLOCK_PATH.read_text(encoding="utf-8")).get("blocked") is False
-        except (OSError, ValueError, TypeError):
-            return True
-    return False
+    return block_status()["blocked"]
+
 
 def block_quota():
     BLOCK_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

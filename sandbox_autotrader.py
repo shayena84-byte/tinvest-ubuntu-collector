@@ -18,6 +18,9 @@ import uuid
 from zoneinfo import ZoneInfo
 
 import sandbox as s
+import risk_policy
+import trade_ledger as ledger
+from runtime_lock import single_run
 
 c = s.c
 TZ = ZoneInfo("Europe/Moscow")
@@ -40,11 +43,11 @@ DEFAULT = {
     "account_ref": "",
     "enabled": True,
     "symbols": ["SBER", "MOEX", "YDEX"],
-    "max_position_fraction": 0.42,
-    "max_gross_fraction": 0.82,
+    "max_position_fraction": 0.10,
+    "max_gross_fraction": 0.50,
     "min_cash_rub": 850,
-    "max_orders_per_day": 8,
-    "daily_loss_limit": 0.08,
+    "max_orders_per_day": 3,
+    "daily_loss_limit": 0.03,
     "stop_loss": 0.025,
     "take_profit": 0.045,
     "trailing_stop": 0.025,
@@ -82,6 +85,7 @@ def log_event(kind, **kwargs):
     fd = os.open(LOG_FILE, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    ledger.event(kind, kwargs)
     print(json.dumps(item, ensure_ascii=False))
 
 def config():
@@ -91,7 +95,7 @@ def config():
     if set(o) - set(DEFAULT):
         raise c.APIError("Неизвестные ключи конфигурации")
     cfg = {**DEFAULT, **o}
-    if not cfg["enabled"]:
+    if cfg["enabled"] is not True:
         raise c.APIError("Торговля приостановлена (enabled=false)")
     if not str(cfg["account_ref"]).startswith("tb_"):
         raise c.APIError("Счёт должен быть задан псевдонимом tb_... из Sandbox accounts")
@@ -104,7 +108,7 @@ def config():
         raise c.APIError("Доля капитала в инструментах должна быть <=90%")
     if not 1 <= int(cfg["max_orders_per_day"]) <= 24:
         raise c.APIError("Неверный лимит числа заявок")
-    return cfg
+    return risk_policy.classic_limits(cfg)
 
 def market_hours(now):
     local = now.astimezone(TZ)
@@ -241,7 +245,8 @@ def held_lots(portfolio, uid, lot):
 def initialize_day(st, now, equity):
     day=now.astimezone(TZ).date().isoformat()
     if st.get("day")!=day:
-        st.update({"day":day,"start_equity":str(equity),"orders_today":0,"last_order_utc":None})
+        st.update({"day":day,"start_equity":str(equity),"orders_today":0})
+    st.setdefault("last_order_utc",None)
     st.setdefault("entries",{})
     st.setdefault("peaks",{})
     return st
@@ -255,70 +260,150 @@ def order_recent(st, now, minutes):
     except (ValueError,TypeError):
         return True
 
-def reconcile_pending(api, account_id, st, now):
-    pending=st.get("pending")
+def reconcile_pending(api, account_id, st, now, cancel_stale=True):
+    pending = st.get("pending")
     if not pending:
         return False
+    client_id = pending.get("client_id") or pending["id"]
+    broker_id = pending.get("broker_id")
+    kind = "ORDER_ID_TYPE_EXCHANGE" if broker_id else "ORDER_ID_TYPE_REQUEST"
+    ident = broker_id or client_id
     try:
-        r=api.call("trader_orderstate", {"accountId": account_id, "orderId":pending["id"]})
-        status=r.get("executionReportStatus","")
+        r = api.call("trader_orderstate", {"accountId": account_id,
+                     "orderId": ident, "orderIdType": kind})
     except c.APIError:
-        # Unknown outcome -> fail closed, do not submit another order.
-        log_event("pending_unverified", ticker=pending.get("symbol"))
-        return True
-    if status in ("EXECUTION_REPORT_STATUS_FILL","EXECUTION_REPORT_STATUS_CANCELLED","EXECUTION_REPORT_STATUS_REJECTED"):
+        # v1.10 and earlier overwrote the client UUID; try the legacy exchange ID too.
+        if "client_id" in pending:
+            log_event("pending_unverified", ticker=pending.get("symbol"))
+            ledger.event("pending_unverified", {"symbol": pending.get("symbol")})
+            return True
+        try:
+            r = api.call("trader_orderstate", {"accountId": account_id,
+                         "orderId": pending["id"], "orderIdType": "ORDER_ID_TYPE_EXCHANGE"})
+        except c.APIError:
+            log_event("pending_unverified", ticker=pending.get("symbol"))
+            return True
+    status = r.get("executionReportStatus", "")
+    ledger.order_state(client_id, r, now)
+    if r.get("orderId"):
+        pending["broker_id"] = r["orderId"]
+    if status in ("EXECUTION_REPORT_STATUS_FILL", "EXECUTION_REPORT_STATUS_CANCELLED",
+                  "EXECUTION_REPORT_STATUS_REJECTED"):
         log_event("order_final", ticker=pending.get("symbol"), direction=pending.get("side"), status=status)
-        st.pop("pending",None)
+        st.pop("pending", None)
         atomic_save(STATE_FILE, st)
         return False
-    if status in ("EXECUTION_REPORT_STATUS_NEW","EXECUTION_REPORT_STATUS_PARTIALLYFILL"):
-        started=datetime.fromisoformat(pending["at"])
-        if (now-started).total_seconds() > 1800:
+    if status in ("EXECUTION_REPORT_STATUS_NEW", "EXECUTION_REPORT_STATUS_PARTIALLYFILL"):
+        if cancel_stale and (now-datetime.fromisoformat(pending["at"])).total_seconds() > 1800:
             try:
-                api.call("trader_cancel", {"accountId":account_id, "orderId":pending["id"]})
-                log_event("stale_order_cancel_requested",ticker=pending["symbol"])
+                api.call("trader_cancel", {"accountId": account_id,
+                         "orderId": pending.get("broker_id") or client_id,
+                         "orderIdType": "ORDER_ID_TYPE_EXCHANGE" if pending.get("broker_id") else "ORDER_ID_TYPE_REQUEST"}, tries=1)
+                log_event("stale_order_cancel_requested", ticker=pending["symbol"])
+                ledger.event("stale_order_cancel_requested", {"symbol": pending["symbol"]})
             except c.APIError:
-                log_event("stale_order_cancel_failed",ticker=pending["symbol"])
+                log_event("stale_order_cancel_failed", ticker=pending["symbol"])
+        atomic_save(STATE_FILE, st)
         return True
     log_event("unknown_order_state", ticker=pending.get("symbol"), state=status)
     return True
 
+
 def post_order(api, account_id, spec, side, lots, price, reason, st, now):
-    if lots < 1:
-        raise c.APIError("Количество лотов должно быть положительным")
-    # SandboxAPI is hard-coded to sandbox-invest-public-api.tbank.ru. This idempotency key
-    # is persisted before transmission to prevent duplicate orders after network timeouts.
+    # Final enforcement applies to all providers and historical entry points.
     if not isinstance(api, s.SandboxAPI) or api.base != s.SANDBOX_BASE:
         raise c.APIError("Торговля разрешена только в официальной песочнице")
-    oid=str(uuid.uuid4())
-    pending={"id":oid,"symbol":spec["ticker"],"side":side,
-             "lots":lots,"reference_price":str(price),"at":now.isoformat()}
-    st["pending"]=pending
-    st["last_order_utc"]=now.isoformat()
-    st["orders_today"]+=1
-    if side=="BUY":
-        st["entries"][spec["uid"]]=str(price)
-        st["peaks"][spec["uid"]]=str(price)
-    atomic_save(STATE_FILE,st)
-    body={"accountId":account_id,"instrumentId":spec["uid"],"quantity":str(lots),
-          "direction":"ORDER_DIRECTION_"+side,"orderType":"ORDER_TYPE_MARKET",
-          "orderId":oid,"confirmMarginTrade":False}
+    if isinstance(lots, bool) or not isinstance(lots, int) or lots < 1 or side not in ("BUY", "SELL"):
+        raise c.APIError("Некорректное направление или количество лотов")
+    if st.get("pending"):
+        raise c.APIError("Previous order is not reconciled")
+    verified = find_share(api, spec["ticker"])
+    if spec["uid"] != verified["uid"] or spec["lot"] != verified["lot"]:
+        raise c.APIError("Unverified instrument identity or lot size")
+    from trading_session import instrument_open
+    from market_recorder import normalize_payload
+    from market_quality import book_check
+    live_book = api.call("book", {"instrumentId": spec["uid"], "depth": 10})
+    checked_at = datetime.now(timezone.utc)
+    book = normalize_payload(verified, {}, live_book, 10, checked_at)
+    book["collected_utc"] = checked_at.isoformat()
+    allowed, why = book_check(book, checked_at)
+    if not allowed:
+        raise c.APIError("Final orderbook rejected: " + why)
+    raw_port = api.call("portfolio", {"accountId": account_id, "currency": "RUB"})
+    raw_pos = api.call("positions", {"accountId": account_id})
+    equity, cash = d(raw_port.get("totalAmountPortfolio")), rub_cash(raw_pos)
+    if not equity.is_finite() or not cash.is_finite() or equity <= 0 or cash < 0:
+        raise c.APIError("Unverified portfolio")
+    initialize_day(st, checked_at, equity)
+    inst = {"symbol": spec["ticker"], "uid": spec["uid"], "lot": spec["lot"],
+            "price_rub": str(price), "book_ask": book["best_ask"],
+            "owned_lots": held_lots(raw_port, spec["uid"], spec["lot"])}
+    context = {"tradable": [inst], "equity_rub": str(equity), "cash_rub": str(cash),
+               "invested_rub_estimate": str(max(Decimal(0), equity-cash))}
+    approved, why = risk_policy.validate({"action": side, "symbol": spec["ticker"],
+                      "lots": lots, "confidence": 1.0}, context, st.get("risk_policy", {}), st, checked_at)
+    if not approved:
+        raise c.APIError("Final risk check: " + why)
+    if api.call("trader_orders", {"accountId": account_id}).get("orders", []):
+        raise c.APIError("Active Sandbox orders block a new submission")
+    if not instrument_open(api, spec["uid"])[0]:
+        raise c.APIError("Trading status changed before submission")
+    allowed, why = book_check(book, datetime.now(timezone.utc))
+    if not allowed:
+        raise c.APIError("Orderbook expired before submission: " + why)
+    # Bound the execution price by a displayed tick-valid quote. No market price drift.
+    limit = Decimal(book["best_ask"] if side == "BUY" else book["best_bid"])
+    oid = str(uuid.uuid4())
+    cycle_id = st.get("cycle_id")
+    if not cycle_id:
+        context["technical"] = spec.get("indicators", {})
+        context["book_time_utc"] = book["book_time_utc"]
+        cycle_id = ledger.start_cycle(context,"run","supervisor" if reason.startswith("supervisor:") else "mechanical",None,now=checked_at)
+        ledger.decision(cycle_id,{"action":side,"symbol":spec["ticker"],"lots":lots,
+                                "confidence":1.0,"reason":reason},None)
+        st["cycle_id"] = cycle_id
+    ledger.order_intent(oid, spec, side, lots, limit, cycle_id, checked_at)
+    st["pending"] = {"id": oid, "client_id": oid, "broker_id": None,
+                     "symbol": spec["ticker"], "uid": spec["uid"], "side": side, "lots": lots,
+                     "reference_price": str(limit), "at": checked_at.isoformat()}
+    st["last_order_utc"] = checked_at.isoformat()
+    st["orders_today"] += 1
+    if side == "BUY":
+        st["entries"][spec["uid"]] = str(limit)
+        st["peaks"][spec["uid"]] = str(limit)
+    atomic_save(STATE_FILE, st)
+    units = int(limit)
+    nanos = int((limit-Decimal(units))*Decimal(1000000000))
+    body = {"accountId": account_id, "instrumentId": spec["uid"], "quantity": str(lots),
+            "direction": "ORDER_DIRECTION_"+side, "orderType": "ORDER_TYPE_LIMIT",
+            "price": {"units": str(units), "nano": nanos}, "orderId": oid, "confirmMarginTrade": False}
     try:
-        response=api.call("trader_post",body,tries=1)
-        st["pending"]["id"]=response.get("orderId") or oid
-        atomic_save(STATE_FILE,st)
-        log_event("sandbox_order_submitted",ticker=spec["ticker"],side=side,
-                  lots=lots,reference_price=str(price),reason=reason,
-                  status=response.get("executionReportStatus","unknown"))
-    except Exception as e:
-        # The request may have reached Sandbox. Keep the pending order and stop trading.
-        log_event("sandbox_order_outcome_unknown",ticker=spec["ticker"],side=side,error=type(e).__name__)
+        response = api.call("trader_post", body, tries=1)
+        st["pending"]["broker_id"] = response.get("orderId")
+        atomic_save(STATE_FILE, st)
+        ledger.order_state(oid, response)
+        log_event("sandbox_order_submitted", ticker=spec["ticker"], side=side, lots=lots,
+                  reference_price=str(limit), reason=reason,
+                  status=response.get("executionReportStatus", "unknown"))
+    except Exception as exc:
+        ledger.finish_cycle(cycle_id, "outcome_unknown")
+        log_event("sandbox_order_outcome_unknown", ticker=spec["ticker"], side=side,
+                  error=type(exc).__name__)
+        ledger.event("order_outcome_unknown", {"client_id": oid, "error": type(exc).__name__}, cycle_id)
         raise
 
+
+@single_run
 def tick(dry_run=False):
     now=datetime.now(timezone.utc)
     cfg=config()
     st=load_json(STATE_FILE,{})
+    st.pop("cycle_id", None)
+    st["risk_policy"] = risk_policy.limits({"max_trade_fraction":cfg["max_position_fraction"],
+        "max_exposure_fraction":cfg["max_gross_fraction"],"max_daily_loss_fraction":cfg["daily_loss_limit"],
+        "max_orders_per_day":cfg["max_orders_per_day"],"minimum_cash_rub":cfg["min_cash_rub"],
+        "cooldown_minutes":cfg["cooldown_minutes"]})
     if not market_hours(now):
         log_event("market_closed")
         return 0
@@ -334,7 +419,10 @@ def tick(dry_run=False):
         raise c.APIError("Не удалось получить положительную оценку виртуального капитала")
     st=initialize_day(st,now,equity)
     atomic_save(STATE_FILE,st)
-    if reconcile_pending(api,account_id,st,now):
+    if dry_run and st.get("pending"):
+        log_event("dry_run_pending_skip")
+        return 0
+    if not dry_run and reconcile_pending(api,account_id,st,now):
         log_event("waiting_order",equity=str(equity))
         return 0
     open_orders=api.call("trader_orders",{"accountId":account_id}).get("orders",[])

@@ -32,7 +32,7 @@ class TestOpenAIQualityTrader(unittest.TestCase):
             self.assertEqual(trader.doctor(),0)
             diag.assert_called_once()
 
-    def test_closed_instruments_do_not_trigger_model_or_account_lookup(self):
+    def test_closed_instruments_do_not_trigger_model_after_order_reconciliation(self):
         with patch.object(trader,"config",return_value={"watchlist":["SBER"]}),\
              patch.object(trader.c,"TOKEN_PATH",Path("/tmp/sandbox-token")),\
              patch.object(trader.t,"config",return_value={"account_ref":"tb_test"}),\
@@ -46,10 +46,11 @@ class TestOpenAIQualityTrader(unittest.TestCase):
              patch.object(trader.t,"post_order") as order,\
              patch.object(trader.t,"get_account") as account,\
              patch.object(trader.ai,"log") as logger:
+            broker.return_value.call.return_value={"orders":[]}
             self.assertEqual(trader.one_cycle(dry_run=False),0)
             model.assert_not_called()
             order.assert_not_called()
-            account.assert_not_called()
+            account.assert_called_once()
             logger.assert_any_call("openai_market_closed",
                                    reason="no_verified_open_instruments",dry_run=False)
 

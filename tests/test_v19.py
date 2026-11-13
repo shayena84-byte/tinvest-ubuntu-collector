@@ -40,10 +40,10 @@ class TestHealth(unittest.TestCase):
             with sqlite3.connect(db) as conn:
                 conn.executescript("""CREATE TABLE instruments(uid TEXT,ticker TEXT,board TEXT);
                  CREATE TABLE snapshots(uid TEXT,collected_utc TEXT,quality_status TEXT,
-                   quality_reason TEXT,spread_pct REAL,book_stale_seconds INTEGER);""")
+                   quality_reason TEXT,spread_pct REAL,book_stale_seconds INTEGER,book_time_utc TEXT);""")
                 conn.execute("INSERT INTO instruments VALUES ('a','SBER','TQBR')")
-                conn.execute("INSERT INTO snapshots VALUES (?,?,?,?,?,?)",
-                             ("a",now.isoformat(),"valid","ok",0.01,0))
+                conn.execute("INSERT INTO snapshots VALUES (?,?,?,?,?,?,?)",
+                             ("a",now.isoformat(),"valid","ok",0.01,0,now.isoformat()))
             result=health.report(db,config,now=now)
             self.assertEqual(result["healthy"],1)
             self.assertEqual(result["configured"],2)

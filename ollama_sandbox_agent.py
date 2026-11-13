@@ -20,6 +20,9 @@ from urllib.error import URLError, HTTPError
 
 import ai_sandbox_agent as ai
 import sandbox_autotrader as t
+import market_quality
+import risk_policy
+from runtime_lock import single_run
 
 CONFIG = Path.home()/".config"/"tinvest-readonly"/"ollama-sandbox.json"
 MARKET_DB = Path.home()/".local"/"share"/"tinvest-market"/"market.sqlite3"
@@ -29,12 +32,12 @@ DEFAULT={
   "enabled":True,
   "model":"qwen3:4b",
   "minimum_confidence":0.70,
-  "max_trade_fraction":0.35,
-  "max_exposure_fraction":0.80,
+  "max_trade_fraction":0.10,
+  "max_exposure_fraction":0.50,
   "minimum_cash_rub":850,
-  "max_orders_per_day":6,
+  "max_orders_per_day":3,
   "cooldown_minutes":20,
-  "max_daily_loss_fraction":0.07,
+  "max_daily_loss_fraction":0.03,
   "watchlist":["SBER","MOEX","YDEX","ROSN","LKOH","NVTK"],
   "max_quote_age_seconds":900,
   "max_snapshot_age_seconds":600,
@@ -61,7 +64,7 @@ def cfg():
         raise t.c.APIError("Превышена экспозиция")
     if not 1<=int(out["max_orders_per_day"])<=12:
         raise t.c.APIError("Превышен лимит заявок")
-    return out
+    return risk_policy.limits(out)
 
 def ollama_request(path,body=None,timeout=120):
     """Always direct local loopback, explicitly disable environment proxy values."""
@@ -115,20 +118,9 @@ def parse_ollama(response):
     return ai.decode_response(fake)
 
 def local_decide(context,model):
-    # A small local model may be weaker than cloud reasoning; treat it as untrusted.
-    system=(ai.SYSTEM+"\nТолько одна рекомендация BUY, SELL или HOLD на этот цикл. "+
-            "Для HOLD задайте symbol='NONE', lots=0 и осмысленную причину. "+
-            "Данные не содержат новостей: не выдумывайте события. "+
-            "Не рекомендуйте высокодефолтные облигации и не выходите за допустимый капитал.")
-    body={
-      "model":model,"stream":False,"think":False,
-      "format":ai.RESPONSE_SCHEMA,
-      "messages":[{"role":"system","content":system},
-                  {"role":"user","content":json.dumps(context,ensure_ascii=False,separators=(",",":"))}],
-      "options":{"temperature":0.3,"num_ctx":8192,"num_predict":700}
-    }
-    result=ollama_request("/api/chat",body,timeout=160)
-    return parse_ollama(result)
+    from decision_providers import OllamaProvider
+    return OllamaProvider().decide(model, context)
+
 
 def gate_by_quality(context,config,now,db_path=MARKET_DB):
     """Allow only actively monitored names with latest good source/book.
@@ -148,9 +140,16 @@ def gate_by_quality(context,config,now,db_path=MARKET_DB):
             if not snap:
                 ai.log("quality_rejected",symbol=row["symbol"],reason="no_snapshot");continue
             collected,status,spread,price,book_time,bid,ask=snap
-            age=(now-datetime.fromisoformat(collected)).total_seconds()
-            if age<0 or age>config["max_snapshot_age_seconds"] or status!="valid":
-                ai.log("quality_rejected",symbol=row["symbol"],reason="old_or_invalid_book");continue
+            valid, reason = market_quality.book_check({"collected_utc":collected,"book_time_utc":book_time,
+                 "quality_status":status,"best_bid":bid,"best_ask":ask}, now,
+                 config["max_snapshot_age_seconds"], config["max_orderbook_spread_pct"])
+            if not valid:
+                ai.log("quality_rejected",symbol=row["symbol"],reason=reason);continue
+            fresh, freshness_reason = market_quality.freshness(
+                collected, book_time, now, config["max_snapshot_age_seconds"],
+                config["max_snapshot_age_seconds"])
+            if not fresh or status!="valid":
+                ai.log("quality_rejected",symbol=row["symbol"],reason=freshness_reason if not fresh else "invalid_book");continue
             if spread is None or spread>config["max_orderbook_spread_pct"]:
                 ai.log("quality_rejected",symbol=row["symbol"],reason="spread_too_wide");continue
             try:
@@ -200,66 +199,9 @@ def history():
             "max_drawdown_pct":str(worst)}
 
 def run(dry_run=False):
-    now=datetime.now(timezone.utc)
-    config=cfg()
-    if not t.market_hours(now):
-        ai.log("local_market_closed");return 0
-    # Verify all endpoint paths remain hardcoded to Sandbox.
-    if t.c.TOKEN_PATH.name!="sandbox-token":
-        raise t.c.APIError("Production token blocked")
-    api=t.s.SandboxAPI(t.c.token_read())
-    old=t.config()
-    account_id=t.get_account(api,old["account_ref"])
-    state=t.load_json(t.STATE_FILE,{})
-    if t.reconcile_pending(api,account_id,state,now):
-        ai.log("local_pending_skip");return 0
-    if api.call("trader_orders",{"accountId":account_id}).get("orders",[]):
-        ai.log("local_open_orders_skip");return 0
-    p=api.call("portfolio",{"accountId":account_id,"currency":"RUB"})
-    cash=t.rub_cash(api.call("positions",{"accountId":account_id}))
-    equity=t.d(p.get("totalAmountPortfolio"))
-    if equity<=0:
-        raise t.c.APIError("Портфель Sandbox не содержит доступной оценки")
-    equity_event(equity,cash,now)
-    state=t.initialize_day(state,now,equity)
-    t.atomic_save(t.STATE_FILE,state)
-    # Reuse already verified T-Invest instrument/price/candle parser.
-    context,_,_=ai.build_context(api,account_id,config,now)
-    context["tradable"]=[r for r in context["tradable"] if r["symbol"] in config["watchlist"]]
-    gate_by_quality(context,config,now)
-    # Max one local model call per cycle; model has no ability to call Sandbox itself.
-    decision=local_decide(context,config["model"])
-    ai.log("local_ai_decision",action=decision["action"],symbol=decision["symbol"],
-           lots=decision["lots"],confidence=decision["confidence"],
-           reason=decision["reason"],risks=decision["risks"],dry_run=dry_run)
-    trade,why=ai.validate(decision,context,config,state,now)
-    if not trade:
-        ai.log("local_hold",reason=why);return 0
-    if dry_run:
-        ai.log("local_dry_run",action=trade["action"],symbol=trade["symbol"],lots=trade["lots"])
-        return 0
-    # Re-fetch portfolio and preserve price/size safety before order.
-    new_portfolio=api.call("portfolio",{"accountId":account_id,"currency":"RUB"})
-    new_positions=api.call("positions",{"accountId":account_id})
-    fresh_equity=t.d(new_portfolio.get("totalAmountPortfolio"))
-    fresh_cash=t.rub_cash(new_positions)
-    if fresh_equity<=0 or abs(fresh_equity-equity)/fresh_equity>Decimal(".02"):
-        ai.log("local_portfolio_changed_abort");return 0
-    inst=trade["instrument"]
-    qty=t.held_lots(new_portfolio,inst["uid"],inst["lot"])
-    if trade["action"]=="BUY" and (qty>0 or fresh_cash<cash*Decimal(".97")):
-        ai.log("local_buy_abort");return 0
-    if trade["action"]=="SELL" and qty<trade["lots"]:
-        ai.log("local_sell_abort");return 0
-    # Final quality check with a fresh DB read, too.
-    gate_by_quality({"tradable":[inst]},config,datetime.now(timezone.utc))
-    spec={"ticker":inst["symbol"],"uid":inst["uid"],"lot":inst["lot"]}
-    t.post_order(api,account_id,spec,trade["action"],trade["lots"],
-                 Decimal(inst["price_rub"]),"local_ai: "+decision["reason"][:90],
-                 state,datetime.now(timezone.utc))
-    ai.log("local_sandbox_order",action=trade["action"],symbol=trade["symbol"],
-           lots=trade["lots"],result="submitted_to_virtual_Sandbox")
-    return 0
+    import openai_quality_trader
+    return openai_quality_trader.one_cycle(dry_run=dry_run, provider="ollama")
+
 
 def main():
     p=argparse.ArgumentParser(description="Ollama local AI for Sandbox ONLY")

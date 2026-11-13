@@ -20,6 +20,10 @@ import ollama_sandbox_agent as shared  # reusable risk/quality/equity routines; 
 import sandbox_autotrader as t
 import trading_session as session
 import v19_guard as guard
+import risk_policy
+import trade_ledger as ledger
+import model_budget
+from runtime_lock import single_run
 
 c = t.c
 MAX_TRADE_FRACTION = 0.10
@@ -34,16 +38,9 @@ MAX_SPREAD_PCT = 0.8
 
 def config():
     """Use existing ~/.config/tinvest-readonly/ai-agent.json with strict ceilings."""
-    cfg = ai.ai_config()
-    cfg["max_trade_fraction"] = min(float(cfg["max_trade_fraction"]), MAX_TRADE_FRACTION)
-    cfg["max_exposure_fraction"] = min(float(cfg["max_exposure_fraction"]), MAX_EXPOSURE_FRACTION)
-    cfg["max_daily_loss_fraction"] = min(float(cfg["max_daily_loss_fraction"]), MAX_DAILY_LOSS_FRACTION)
-    cfg["max_orders_per_day"] = min(int(cfg["max_orders_per_day"]), MAX_ORDERS_DAY)
-    cfg["max_ai_calls_per_day"] = min(int(cfg["max_ai_calls_per_day"]), MAX_API_CALLS_DAY)
-    cfg["minimum_confidence"] = max(float(cfg["minimum_confidence"]), REQUIRED_CONFIDENCE)
+    cfg = risk_policy.limits(ai.ai_config())
     cfg["max_snapshot_age_seconds"] = MAX_BOOK_AGE
     cfg["max_orderbook_spread_pct"] = MAX_SPREAD_PCT
-    # Only shares watched by our market recorder can pass the quality gate.
     return cfg
 
 
@@ -61,7 +58,7 @@ def status():
         "mode": "T-Invest Sandbox only",
         "risk_ceiling_per_trade": cfg["max_trade_fraction"],
         "openai_quota_block": guard.block_status(),
-        "daily_ai_calls": state.get("ai_calls_today", 0),
+        "model_budget": model_budget.status(),
         "daily_orders": state.get("orders_today", 0),
         "virtual_equity": shared.history(),
         "recent_decisions": ai.load_decisions(10),
@@ -92,142 +89,107 @@ def session_status():
     return 1 if details and all(x["reason"] == "status_probe_error" for x in details) else 0
 
 
-def one_cycle(dry_run=False):
+@single_run
+def one_cycle(dry_run=False, provider="openai"):
+    if provider not in ("openai", "ollama"):
+        raise ValueError("Unknown decision provider")
     now = datetime.now(timezone.utc)
-    cfg = config()
-    if guard.is_blocked():
-        ai.log("openai_quota_circuit_open", dry_run=dry_run)
-        return 0
-    # Trading availability is a per-instrument live broker status, not a
-    # Moscow-time window. This deliberately supports any verified evening or
-    # special session while remaining fail-closed on weekends and holidays.
+    cfg = config() if provider == "openai" else risk_policy.limits(shared.cfg())
     if c.TOKEN_PATH.name != "sandbox-token":
         raise c.APIError("Production token rejected: Sandbox only")
-    old_cfg = t.config()
-    account_ref = old_cfg["account_ref"]
+    account_ref = t.config()["account_ref"]
     if not isinstance(account_ref, str) or not account_ref.startswith("tb_"):
         raise c.APIError("Не настроен виртуальный Sandbox-счёт")
-    key = ai.read_key()  # existing private file; never echoed or sent to T-Invest
     api = t.s.SandboxAPI(c.token_read())
-    open_symbols, market_checks = session.open_watchlist(api, cfg["watchlist"])
-    ai.log("openai_trading_status", checks=market_checks, dry_run=dry_run)
-    if not open_symbols:
-        ai.log("openai_market_closed", reason="no_verified_open_instruments",
-               dry_run=dry_run)
-        return 0
-    # Restrict both the technical-data builder and model to currently open
-    # instruments. Its own exchange_open() remains a second independent check.
-    cfg["watchlist"] = open_symbols
     account_id = t.get_account(api, account_ref)
     st = ai.init_ai_state(t.load_json(t.STATE_FILE, {}), now)
-
-    # Dry-run is strictly read-only. Existing order reconciliation can cancel
-    # stale orders and must not be invoked in dry-run mode.
+    # Reconciliation precedes every cloud/session/budget check. Offline supervision
+    # has its own command/timer too, and never requires an OpenAI key.
     if dry_run:
         if st.get("pending"):
             ai.log("openai_dry_run_skipped", reason="pending_order")
             return 0
-    else:
-        if t.reconcile_pending(api, account_id, st, now):
-            ai.log("openai_pending_skip")
-            return 0
-    open_orders = api.call("trader_orders", {"accountId": account_id}).get("orders", [])
-    if open_orders:
-        ai.log("openai_active_orders_skip", count=len(open_orders))
+    elif t.reconcile_pending(api, account_id, st, now):
+        ledger.heartbeat("trader", "pending_order", now=now)
         return 0
-    if st.get("ai_calls_today", 0) >= cfg["max_ai_calls_per_day"]:
-        ai.log("openai_api_daily_budget_reached")
+    if api.call("trader_orders", {"accountId": account_id}).get("orders", []):
+        ai.log("openai_active_orders_skip")
         return 0
-
-    # Build dynamic technical context from T-Invest Sandbox market feed.
+    if provider == "openai" and guard.is_blocked():
+        ai.log("openai_quota_circuit_open", dry_run=dry_run)
+        ledger.heartbeat("trader", "provider_blocked", now=now)
+        return 0
+    open_symbols, market_checks = session.open_watchlist(api, cfg["watchlist"])
+    ledger.heartbeat("market_status", "open" if open_symbols else "closed_or_unverified",
+                     {"checks": market_checks}, now)
+    ai.log("openai_trading_status", checks=market_checks, dry_run=dry_run)
+    if not open_symbols:
+        ai.log("openai_market_closed", reason="no_verified_open_instruments", dry_run=dry_run)
+        return 0
+    cfg["watchlist"] = open_symbols
     context, portfolio, positions = ai.build_context(api, account_id, cfg, now)
-    # Exclude stale/crossed/unknown/too-wide books from the model's choices.
-    _quality(cfg, context, now)
-    equity = Decimal(context["equity_rub"])
-    cash = Decimal(context["cash_rub"])
+    _quality(cfg, context, datetime.now(timezone.utc))
+    equity, cash = Decimal(context["equity_rub"]), Decimal(context["cash_rub"])
     if not dry_run:
-        # Daily risk state is persisted before any virtual trade.
         st = t.initialize_day(st, now, equity)
+        st["risk_policy"] = {k: v for k, v in cfg.items() if k in risk_policy.limits({})}
         t.atomic_save(t.STATE_FILE, st)
         shared.equity_event(equity, cash, now)
-        # Count BEFORE requesting the OpenAI API, even if the network request fails.
-        st["ai_calls_today"] = int(st.get("ai_calls_today", 0)) + 1
-        t.atomic_save(t.STATE_FILE, st)
-
-    # One cloud model decision, no tool access or brokerage credentials.
+        ledger.portfolio(equity, cash, portfolio.get("positions", []), "trader", now)
+        if st.get("orders_today", 0) >= cfg["max_orders_per_day"] or t.order_recent(st, now, cfg["cooldown_minutes"]):
+            ai.log("openai_precheck_skip", reason="order_limit_or_cooldown")
+            ledger.heartbeat("trader", "risk_pause", now=now)
+            return 0
+    cycle_id = ledger.start_cycle(context, "dry-run" if dry_run else "run",
+                                  provider, cfg["model"], ai.SYSTEM, now)
+    context["_cycle_id"], context["_mode"] = cycle_id, "dry-run" if dry_run else "run"
+    st["cycle_id"] = cycle_id
     try:
-        decision, usage = ai.ask_openai(key, cfg["model"], context)
-    except c.APIError as exc:
-        if guard.is_quota_error(str(exc)):
-            guard.block_quota()
-            ai.log("openai_quota_circuit_open", dry_run=dry_run)
+        # All providers share decision/risk interfaces. Budget reservation occurs
+        # inside ask_openai, BEFORE a request, also for manual/dry-run callers.
+        if provider == "openai":
+            decision, usage = ai.ask_openai(ai.read_key(), cfg["model"], context)
+        else:
+            decision, usage = shared.local_decide(context, cfg["model"]), {}
+    except model_budget.BudgetBlocked as exc:
+        ledger.finish_cycle(cycle_id, "budget_blocked")
+        ledger.heartbeat("trader", "budget_pause", {"reason": str(exc)})
+        ai.log("openai_budget_pause", reason=str(exc))
+        return 0
+    except Exception:
+        ledger.finish_cycle(cycle_id, "provider_error")
         raise
-    ai.log("ai_decision", provider="openai", action=decision["action"],
-           symbol=decision["symbol"], lots=decision["lots"],
-           confidence=decision["confidence"], reason=decision["reason"],
-           risks=decision["risks"], usage=usage, dry_run=dry_run)
+    ai.log("ai_decision", provider=provider, action=decision["action"], symbol=decision["symbol"],
+           lots=decision["lots"], confidence=decision["confidence"], reason=decision["reason"],
+           risks=decision["risks"], usage=usage, dry_run=dry_run, cycle_id=cycle_id)
     trade, why = ai.validate(decision, context, cfg, st, now)
+    ledger.decision(cycle_id, decision, why)
     if trade is None:
+        ledger.finish_cycle(cycle_id, "hold" if why == "HOLD" else "rejected")
+        ledger.heartbeat("trader", "hold" if why == "HOLD" else "rejected", {"reason": why, "mode": context["_mode"]})
         ai.log("openai_no_order", reason=why)
         return 0
     if dry_run:
-        ai.log("openai_dry_run_only", action=trade["action"],
-               symbol=trade["symbol"], lots=trade["lots"])
+        ledger.finish_cycle(cycle_id, "dry_run")
+        ai.log("openai_dry_run_only", action=trade["action"], symbol=trade["symbol"], lots=trade["lots"])
         return 0
-
-    # Re-fetch virtual portfolio and verify the local quality snapshot again.
-    new_port = api.call("portfolio", {"accountId": account_id, "currency": "RUB"})
-    new_pos = api.call("positions", {"accountId": account_id})
-    new_equity = t.d(new_port.get("totalAmountPortfolio"))
-    new_cash = t.rub_cash(new_pos)
-    if new_equity <= 0 or abs(new_equity-equity) > new_equity*Decimal(".02"):
-        ai.log("openai_equity_changed_abort")
-        return 0
-    if api.call("trader_orders", {"accountId": account_id}).get("orders", []):
-        ai.log("openai_order_race_abort")
-        return 0
-    instrument = trade["instrument"]
-    # The market may have entered an auction/break/closed between model
-    # response and trade execution. Re-read the trading status by exact UID.
-    is_open, current_reason = session.instrument_open(api, instrument["uid"])
+    inst = trade["instrument"]
+    is_open, reason = session.instrument_open(api, inst["uid"])
     if not is_open:
-        ai.log("openai_market_changed_abort", symbol=trade["symbol"],
-               reason=current_reason)
+        ledger.finish_cycle(cycle_id, "market_changed")
         return 0
-    held = t.held_lots(new_port, instrument["uid"], instrument["lot"])
-    if trade["action"] == "BUY" and (held > 0 or new_cash < cash*Decimal(".97")):
-        ai.log("openai_buy_state_changed_abort")
-        return 0
-    if trade["action"] == "SELL" and held < trade["lots"]:
-        ai.log("openai_sell_position_changed_abort")
-        return 0
-    _quality(cfg, {"tradable": [instrument]}, datetime.now(timezone.utc))
-    # Check once more after the quality filter. A status-query failure is
-    # fatal and leaves any virtual order unsent.
-    is_open, current_reason = session.instrument_open(api, instrument["uid"])
+    _quality(cfg, {"tradable": [inst]}, datetime.now(timezone.utc))
+    is_open, reason = session.instrument_open(api, inst["uid"])
     if not is_open:
-        ai.log("openai_market_changed_abort", symbol=trade["symbol"],
-               reason=current_reason)
+        ledger.finish_cycle(cycle_id, "market_changed")
         return 0
-
-    # Independent final order size check. Recalculate affordability from new cash.
-    price = Decimal(instrument["price_rub"])
-    lots = int(trade["lots"])
-    notion = price*int(instrument["lot"])*lots
-    if trade["action"] == "BUY":
-        max_buy = min(new_equity*Decimal(str(cfg["max_trade_fraction"])),
-                      new_cash-Decimal(str(cfg["minimum_cash_rub"])))
-        if notion*Decimal("1.002") > max_buy or max_buy <= 0:
-            ai.log("openai_risk_limit_changed_abort")
-            return 0
-    spec = {"ticker": trade["symbol"], "uid": instrument["uid"],
-            "lot": instrument["lot"]}
-    t.post_order(api, account_id, spec, trade["action"], lots, price,
-                 "openai: "+decision["reason"][:90],
-                 st, datetime.now(timezone.utc))
-    ai.log("execution", provider="openai", action=trade["action"],
-           symbol=trade["symbol"], lots=lots,
-           result="submitted_to_TInvest_Sandbox")
+    # post_order performs a fresh live book/portfolio/status/size check for ALL engines.
+    t.post_order(api, account_id, {"ticker": trade["symbol"], "uid": inst["uid"], "lot": inst["lot"]},
+                 trade["action"], trade["lots"], Decimal(inst["price_rub"]),
+                 "openai: " + decision["reason"][:90], st, datetime.now(timezone.utc))
+    ledger.heartbeat("trader", "submitted", {"symbol": trade["symbol"]})
+    ai.log("execution", provider=provider, action=trade["action"], symbol=trade["symbol"],
+           lots=trade["lots"], result="submitted_to_TInvest_Sandbox", cycle_id=cycle_id)
     return 0
 
 
@@ -244,8 +206,9 @@ def main():
         if action == "status": return status()
         if action == "session": return session_status()
         return one_cycle(dry_run=(action == "dry-run"))
-    except (c.APIError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+    except (c.APIError, ValueError, KeyError, TypeError, sqlite3.Error, RuntimeError, model_budget.BudgetBlocked) as exc:
         # Secrets are never logged. Broker/API errors already use sanitized messages.
+        ledger.heartbeat("trader", "error", {"error": type(exc).__name__})
         ai.log("openai_sandbox_error", reason=type(exc).__name__+": "+str(exc)[:180])
         return 1
 

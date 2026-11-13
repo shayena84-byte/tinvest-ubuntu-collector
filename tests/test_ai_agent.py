@@ -24,17 +24,24 @@ class TestAIAgent(unittest.TestCase):
             agent.decode_response(response)
 
     def test_no_model_trade_call(self):
-        # Agent must not expose order placement tool to the LLM.
-        import inspect
-        source=inspect.getsource(agent.ask_openai)
-        self.assertNotIn('"tools"',source)
-        self.assertIn('json_schema',source)
-        self.assertIn('"store":False',source)
+        from io import BytesIO
+        result={"action":"HOLD","symbol":"NONE","lots":0,"confidence":.9,
+                "reason":"Недостаточно данных для входа в позицию","risks":"Нет подтверждения","horizon_minutes":30}
+        raw={"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":json.dumps(result)}]}],"usage":{}}
+        def transport(request, timeout):
+            body=json.loads(request.data)
+            self.assertNotIn("tools",body)
+            self.assertFalse(body["store"])
+            self.assertEqual(body["text"]["format"]["type"],"json_schema")
+            return BytesIO(json.dumps(raw).encode())
+        with patch.object(agent,"urlopen",side_effect=transport):
+            decision,_=agent._request_openai("FAKE","gpt-test",{})
+        self.assertEqual(decision["action"],"HOLD")
 
     def test_cash_risk_limits(self):
         now=datetime(2026,11,12,9,tzinfo=timezone.utc)
         row={"symbol":"SBER","uid":"mock","lot":10,"price_rub":"300","owned_lots":0}
-        ctx={"tradable":[row],"equity_rub":"10000","cash_rub":"10000","invested_rub_estimate":"0"}
+        ctx={"tradable":[row],"equity_rub":"40000","cash_rub":"40000","invested_rub_estimate":"0"}
         cfg={**agent.DEFAULT_AI}
         decision={"action":"BUY","symbol":"SBER","lots":2,"confidence":.90,
                   "reason":"Рост подтверждён повышенной торговой активностью",
@@ -83,9 +90,10 @@ class TestAIAgent(unittest.TestCase):
         e=HTTPError("https://api.openai.com/v1/responses",403,"Forbidden",{},BytesIO(b"unparseable HTML body"))
         self.assertEqual(agent.safe_api_error(e),"HTTP 403")
 
-    def test_api_daily_limit(self):
-        with patch.object(agent,'read_key',return_value="sk-test"),patch.object(agent.t,'market_hours',return_value=False):
-            self.assertIsNone(agent.run(dry_run=True))
+    def test_legacy_cli_uses_shared_engine(self):
+        with patch("openai_quality_trader.one_cycle",return_value=0) as engine:
+            self.assertEqual(agent.run(dry_run=True),0)
+            engine.assert_called_once_with(dry_run=True)
 
 if __name__=="__main__":
     unittest.main()

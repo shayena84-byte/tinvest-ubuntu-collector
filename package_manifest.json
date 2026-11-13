@@ -1,0 +1,19 @@
+{
+  "runtime": [
+    "collector.py", "sandbox.py", "sandbox_autotrader.py", "ai_sandbox_agent.py",
+    "ollama_sandbox_agent.py", "openai_quality_trader.py", "trading_session.py",
+    "v19_guard.py", "v19_health.py", "offline_market_audit.py", "market_recorder.py",
+    "market_dashboard.py", "market_quality.py", "risk_policy.py", "trade_ledger.py",
+    "model_budget.py", "runtime_lock.py", "decision_providers.py", "sandbox_supervisor.py",
+    "system_status.py", "offline_replay.py", "version.py", "dashboard.html", "dashboard.js"
+  ],
+  "support": [
+    "install_project.py", "install_v1_11.sh", "build_release.py", "package_manifest.json",
+    "install.sh", "install_autotrader.sh", "install_ai_agent.sh", "install_market_recorder.sh",
+    "install_market_quality.sh", "install_v1_6.sh", "install_openai_backend.sh",
+    "upgrade_dynamic_session.sh", "upgrade_v1_9.sh", "upgrade_v1_10.sh", "README.md",
+    "V1_11_OPERATIONS.md", "MARKET_RECORDER.md", "MARKET_QUALITY_DASHBOARD.md",
+    "V1_6_AUTONOMOUS_SANDBOX.md", "V1_7_OPENAI_SANDBOX.md", "V1_8_DYNAMIC_TRADING_STATUS.md",
+    "V1_9_SAFETY.md", "V1_10_OFFLINE_AUDIT.md"
+  ]
+}

@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import sqlite3
 import statistics
+import market_quality
 import sys
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -88,10 +89,12 @@ def dashboard_data(db_path=DEFAULT_DB,hours=24,now=None):
                 change=None
         else:
             change=None
+        fresh, fresh_reason = market_quality.freshness(latest["collected_utc"], latest["book_time_utc"], now) if latest else (False,"no_snapshot")
         summaries.append({
             "symbol":group["symbol"],"board":group["board"],"name":group["name"],
             "isin":group["isin"],"measurements":len(data),"statuses":statuses,
             "last":latest,"last_confirmed":good[-1] if good else None,
+            "fresh_now":fresh,"freshness_reason":fresh_reason,
             "median_valid_spread_pct":round(statistics.median(spreads),4) if spreads else None,
             "validated_price_change_pct":change,
         })
@@ -172,7 +175,7 @@ def depth_data(db_path=DEFAULT_DB, symbol="SBER", board="TQBR", hours=24, now=No
     col_time=datetime.fromisoformat(latest["collected_utc"])
     # The simulated execution is informative only on fresh, internally consistent snapshots.
     usable=(latest["quality_status"]=="valid" and
-            0 <= (now-col_time).total_seconds() <= 600)
+            market_quality.freshness(latest["collected_utc"], latest["book_time_utc"], now)[0])
     series=[]
     for row in reversed(snaps):
         b,a=row["bids_total"],row["asks_total"]
@@ -220,6 +223,20 @@ class LocalHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p=urlsplit(self.path)
+        if p.path in ("/api/system", "/api/trading"):
+            try:
+                if p.path == "/api/system":
+                    from system_status import report
+                    payload = report(self.server.database_path)
+                else:
+                    from trade_ledger import summary
+                    limit = int(parse_qs(p.query).get("limit", ["30"])[0])
+                    payload = summary(limit=limit)
+                self.send_data(200, "application/json; charset=utf-8",
+                               json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+            except (ValueError, OSError, sqlite3.Error):
+                self.send_data(503, "application/json; charset=utf-8", b'{"error":"status_unavailable"}')
+            return
         if p.path=="/":
             content=WEB_DIR/"dashboard.html"
             if not content.is_file():
