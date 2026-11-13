@@ -9,3 +9,11 @@ tinvest-reports/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Private runtime journals and build products
+*.sqlite3
+*.sqlite3-*
+*.sqlite
+*.db
+*.jsonl
+.build/

@@ -29,7 +29,7 @@ DB_DIR = Path.home() / ".local" / "share" / "tinvest-market"
 DB_PATH = DB_DIR / "market.sqlite3"
 EXPORT_DIR = Path.home() / "tinvest-reports" / "market"
 READ_METHODS = frozenset({"find", "instrument", "last", "book"})
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_CONFIG = {
     "depth": 10,
     "instruments": [
@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS instruments (
     name TEXT NOT NULL,
     kind TEXT NOT NULL,
     currency TEXT,
+    lot INTEGER,
     first_seen_utc TEXT NOT NULL,
     last_seen_utc TEXT NOT NULL,
     UNIQUE(uid, board)
@@ -307,7 +308,7 @@ def connect(db_path=DB_PATH):
         db.executescript(SCHEMA)
         with db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, 1, 2, SCHEMA_VERSION):
                 raise RecorderError(f"Неподдерживаемая версия схемы БД: {version}")
             if version == 1:
                 # In-place upgrade; preserve all existing snapshots and order-book levels.
@@ -326,6 +327,8 @@ def connect(db_path=DB_PATH):
                             (snapshot_id,status,reason,detected_utc)
                             SELECT id,quality_status,quality_reason,collected_utc
                             FROM snapshots WHERE quality_status!='valid'""")
+            if "lot" not in {r[1] for r in db.execute("PRAGMA table_info(instruments)")}:
+                db.execute("ALTER TABLE instruments ADD COLUMN lot INTEGER")
             db.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_quality ON snapshots(quality_status, collected_utc)")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         os.chmod(db_path, 0o600)
@@ -346,15 +349,15 @@ def store_snapshot(db, instrument, row, now):
     )
     with db:
         db.execute("""INSERT INTO instruments
-            (uid,ticker,isin,board,name,kind,currency,first_seen_utc,last_seen_utc)
-            VALUES (?,?,?,?,?,?,?,?,?)
+            (uid,ticker,isin,board,name,kind,currency,lot,first_seen_utc,last_seen_utc)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(uid) DO UPDATE SET
               ticker=excluded.ticker, isin=excluded.isin, board=excluded.board,
               name=excluded.name, kind=excluded.kind,
-              currency=excluded.currency, last_seen_utc=excluded.last_seen_utc""",
+              currency=excluded.currency, lot=COALESCE(excluded.lot,instruments.lot), last_seen_utc=excluded.last_seen_utc""",
             (instrument["uid"],instrument["ticker"],instrument["isin"],
              instrument["board"],instrument["name"],instrument["kind"],
-             instrument["currency"],fetched_at,fetched_at))
+             instrument["currency"],instrument.get("lot"),fetched_at,fetched_at))
         db.execute("""INSERT INTO snapshots
             (uid,slot_utc,collected_utc,last_price,last_trade_utc,book_time_utc,
              best_bid,best_ask,spread_pct,bid_top_lots,ask_top_lots,
@@ -420,7 +423,8 @@ def resolve(api, spec):
     return {"uid":uid, "ticker":str(inst.get("ticker",spec["symbol"])),
             "isin":str(inst.get("isin","")), "board":spec["board"],
             "kind":spec["kind"],"name":str(inst.get("name",spec["symbol"])),
-            "currency":str(inst.get("currency",""))}
+            "currency":str(inst.get("currency","")),
+            "lot":int(inst["lot"]) if str(inst.get("lot", "")).isdigit() and int(inst["lot"]) > 0 else None}
 
 
 def read_one(api, spec, depth, now):
@@ -462,6 +466,9 @@ def collect(api=None, db_path=DB_PATH, config=None, now=None):
                       file=sys.stderr)
     finally:
         db.close()
+    import trade_ledger as ledger
+    ledger.heartbeat("recorder", "ok" if failure == 0 else "collection_error",
+                     {"saved": okay, "failed": failure}, now)
     print(f"Market DB: {db_path}; saved={okay}; failed={failure}; "
           f"slot={slot_5min(now)}")
     return 0 if failure == 0 else 1

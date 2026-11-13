@@ -1,69 +1,77 @@
-name: Test and publish v1.10.0 archive
+name: Publish immutable versioned archive
 on:
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/release.yml"
-      - "**.py"
-      - "tests/**"
-      - "upgrade_v1_9.sh"
-      - "V1_9_SAFETY.md"
-      - "upgrade_v1_10.sh"
-      - "V1_10_OFFLINE_AUDIT.md"
-  pull_request:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
-
+    inputs:
+      tag:
+        description: Existing version tag to publish, e.g. v1.11.0
+        required: true
+        type: string
 permissions:
-  contents: write
-
+  contents: read
 jobs:
-  test:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      REQUESTED_TAG: ${{ inputs.tag || '' }}
+      SOURCE_REF: ${{ github.ref }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Compile and offline tests
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          fetch-depth: 0
+      - name: Resolve immutable version tag
+        id: version
         run: |
-          python3 -m py_compile collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py market_recorder.py market_dashboard.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py v19_guard.py v19_health.py offline_market_audit.py
-          bash -n install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh upgrade_v1_9.sh upgrade_v1_10.sh
+          python3 - <<'PY'
+          import os,re,subprocess
+          from version import VERSION
+          tag='v'+VERSION
+          requested=os.environ['REQUESTED_TAG']
+          ref=os.environ['SOURCE_REF']
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag), 'Invalid version'
+          if requested: assert requested==tag, 'Version/tag mismatch'
+          if ref.startswith('refs/tags/'): assert ref=='refs/tags/'+tag, 'Tag mismatch'
+          existing=subprocess.run(['gh','release','view',tag],capture_output=True).returncode==0
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:
+              out.write('tag='+tag+'\npublish='+('false' if existing else 'true')+'\n')
+          if existing: print('Existing release is preserved; no assets will be replaced.')
+          PY
+      - name: Tests, syntax and installation
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          python3 -m compileall -q .
+          for task_script in *.sh; do bash -n "$task_script"; done
           node --check dashboard.js
-          python3 -m unittest discover -s tests -v
-
-  publish:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Build installer ZIP
-        run: |
-          mkdir -p /tmp/tinvest_ubuntu_collector
-          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py v19_guard.py v19_health.py offline_market_audit.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh upgrade_v1_9.sh upgrade_v1_10.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md V1_6_AUTONOMOUS_SANDBOX.md V1_7_OPENAI_SANDBOX.md V1_8_DYNAMIC_TRADING_STATUS.md V1_9_SAFETY.md V1_10_OFFLINE_AUDIT.md /tmp/tinvest_ubuntu_collector/
-          cp -r tests /tmp/tinvest_ubuntu_collector/
-          cd /tmp
-          zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
-      - name: Publish release v1.10.0
+          python3 -m unittest discover -s tests -q
+      - name: Create or verify immutable tag
+        if: steps.version.outputs.publish == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if gh release view v1.10.0 >/dev/null 2>&1; then
-            gh release upload v1.10.0 tinvest_ubuntu_collector.zip --clobber
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
           else
-            gh release create v1.10.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.10.0" --notes-file V1_10_OFFLINE_AUDIT.md
+            test "$SOURCE_REF" = refs/heads/main
+            git tag "$RELEASE_TAG" HEAD
+            git push origin "refs/tags/$RELEASE_TAG"
           fi
-
-      - name: Restore v1.9.0 archive from immutable tagged source
+          git checkout --detach "$RELEASE_TAG"
+      - name: Build checksummed package from tagged source
+        if: steps.version.outputs.publish == 'true'
+        run: python3 build_release.py --output .build/tinvest_ubuntu_collector.zip
+      - name: Publish new release without modifying existing assets
+        if: steps.version.outputs.publish == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          git clone --depth 1 --branch v1.9.0 https://github.com/${{ github.repository }}.git /tmp/tinvest-v19-source
-          mkdir -p /tmp/tinvest-v19-package/tinvest_ubuntu_collector
-          cd /tmp/tinvest-v19-source
-          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py v19_guard.py v19_health.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh upgrade_v1_9.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md V1_6_AUTONOMOUS_SANDBOX.md V1_7_OPENAI_SANDBOX.md V1_8_DYNAMIC_TRADING_STATUS.md V1_9_SAFETY.md /tmp/tinvest-v19-package/tinvest_ubuntu_collector/
-          cp -r tests /tmp/tinvest-v19-package/tinvest_ubuntu_collector/
-          cd /tmp/tinvest-v19-package
-          zip -q -r "/tmp/tinvest-v19-package/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
-          cd "$GITHUB_WORKSPACE"
-          gh release upload v1.9.0 /tmp/tinvest-v19-package/tinvest_ubuntu_collector.zip --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Existing release will not be overwritten." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" .build/tinvest_ubuntu_collector.zip .build/tinvest_ubuntu_collector.zip.sha256 --verify-tag --title "T-Invest Ubuntu Collector $RELEASE_TAG" --notes-file V1_11_OPERATIONS.md

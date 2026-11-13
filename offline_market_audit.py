@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 import statistics
+import market_quality
 
 DB = Path.home() / ".local/share/tinvest-market/market.sqlite3"
 CFG = Path.home() / ".config/tinvest-readonly/market-recorder.json"
@@ -43,16 +44,16 @@ def examine(db_path=DB, config_path=CFG, hours=24, now=None,
         for spec in config["instruments"]:
             # Resolve exact trading board and ISIN (if present); ticker in DB
             # may differ from the configured security identifier.
+            uid = market_quality.resolve_uid(db, spec["symbol"], spec["board"])
             rows = [dict(r) for r in db.execute("""
                 SELECT s.slot_utc, s.collected_utc, s.quality_status, s.quality_reason,
                        s.spread_pct, s.book_stale_seconds, s.best_bid, s.best_ask,
                        s.bids_total, s.asks_total
                 FROM snapshots s JOIN instruments i ON i.uid=s.uid
-                WHERE i.board=? AND (i.ticker=? OR i.isin=?)
+                WHERE s.uid=?
                   AND s.collected_utc>=? AND s.collected_utc<=?
                 ORDER BY s.slot_utc, s.collected_utc
-            """, (spec["board"],spec["symbol"],spec["symbol"],
-                  start.isoformat(), now.isoformat()))]
+            """, (uid, start.isoformat(), now.isoformat()))]
             # Collapse re-collections within a single five-minute slot.
             slots = {}
             for row in rows:

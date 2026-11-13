@@ -9,6 +9,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import sqlite3
+import market_quality
 
 DB = Path.home() / ".local/share/tinvest-market/market.sqlite3"
 CONFIG = Path.home() / ".config/tinvest-readonly/market-recorder.json"
@@ -22,28 +23,28 @@ def report(db_path=DB, config_path=CONFIG, now=None, max_age_minutes=12):
         db.row_factory = sqlite3.Row
         items=[]
         for spec in instruments:
+            uid = market_quality.resolve_uid(db, spec["symbol"], spec["board"])
+            columns = {r[1] for r in db.execute("PRAGMA table_info(snapshots)")}
+            book_column = "book_time_utc" if "book_time_utc" in columns else "NULL AS book_time_utc"
             row = db.execute(
-                """SELECT s.collected_utc, s.quality_status, s.quality_reason,
-                          s.spread_pct, s.book_stale_seconds
-                   FROM snapshots s JOIN instruments i ON i.uid=s.uid
-                   WHERE i.ticker=? AND i.board=?
-                   ORDER BY s.collected_utc DESC LIMIT 1""",
-                (spec["symbol"],spec["board"])).fetchone()
+                "SELECT collected_utc,quality_status,quality_reason,spread_pct,"+book_column+
+                " FROM snapshots WHERE uid=? ORDER BY collected_utc DESC LIMIT 1", (uid,)).fetchone()
             if row is None:
                 items.append({"symbol":spec["symbol"],"board":spec["board"],
                               "healthy":False,"reason":"no_snapshot"})
                 continue
-            stamp = datetime.fromisoformat(row["collected_utc"].replace("Z","+00:00"))
-            age = max(0,(now-stamp).total_seconds()/60)
-            healthy = (row["quality_status"]=="valid" and age<=max_age_minutes
-                       and row["book_stale_seconds"] is not None
-                       and row["book_stale_seconds"]<=max_age_minutes*60)
-            items.append({"symbol":spec["symbol"],"board":spec["board"],
-                "healthy":healthy,
-                "reason":"ok" if healthy else ("old_snapshot" if age>max_age_minutes
-                      else row["quality_reason"] if row["quality_status"]!="valid"
-                      else "old_orderbook"),
-                "age_minutes":round(age,1),"spread_pct":row["spread_pct"]})
+            fresh, reason = market_quality.freshness(row["collected_utc"], row["book_time_utc"],
+                         now, max_age_minutes*60, max_age_minutes*60)
+            healthy = fresh and row["quality_status"] == "valid"
+            if fresh and not healthy:
+                reason = row["quality_reason"]
+            try:
+                age = round(market_quality.age_seconds(row["collected_utc"], now)/60, 1)
+            except (ValueError, TypeError):
+                age = None
+            items.append({"symbol":spec["symbol"],"board":spec["board"],"uid":uid,
+                          "healthy":healthy,"reason":"ok" if healthy else reason,
+                          "age_minutes":age,"spread_pct":row["spread_pct"]})
     return {"checked_utc":now.isoformat(),"configured":len(instruments),
             "healthy":sum(x["healthy"] for x in items),"instruments":items}
 

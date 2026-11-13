@@ -75,15 +75,9 @@ class TestLocalSandboxAgent(unittest.TestCase):
         ctx["tradable"][0]["price_rub"]="350"
         with self.assertRaises(a.t.c.APIError):
             a.gate_by_quality(ctx,a.DEFAULT,self.now,self.db)
-    def test_model_cannot_traverse_to_prod(self):
-        import inspect
-        source=inspect.getsource(a)
-        self.assertNotIn("PostOrder\"",source)
-        self.assertIn("t.post_order",source)
-        self.assertNotIn("api.openai.com",source)
-    def test_market_closed_does_not_order(self):
-        with patch.object(a.t,"market_hours",return_value=False):
-            self.assertEqual(a.run(dry_run=False),0)
-
+    def test_local_provider_uses_common_sandbox_engine(self):
+        with patch("openai_quality_trader.one_cycle",return_value=0) as engine:
+            self.assertEqual(a.run(dry_run=True),0)
+            engine.assert_called_once_with(dry_run=True,provider="ollama")
 
 if __name__=="__main__":unittest.main()

@@ -58,7 +58,7 @@ footer{color:#748ba0;font-size:12px;line-height:1.7;margin-top:20px;border-top:1
 <header>
   <div>
     <div class="eyebrow">T-INVEST SANDBOX / MARKET INTELLIGENCE</div>
-    <h1>Рыночный мониторинг</h1>
+    <h1>Инвестиционная система</h1>
     <p class="subtitle">История котировок, глубины стакана и качества данных. Локальный дашборд с пятиминутными замерами из SQLite.</p>
   </div>
   <div class="header-right">
@@ -68,6 +68,22 @@ footer{color:#748ba0;font-size:12px;line-height:1.7;margin-top:20px;border-top:1
   </div>
 </header>
 <div id="error" class="errbox" role="alert"></div>
+<section class="panel" aria-label="Состояние системы">
+  <h2>Состояние системы <small id="system-version"></small></h2>
+  <p class="desc" id="system-stamp">Последние наблюдения служб; обновление каждую минуту</p>
+  <div class="cards">
+    <div class="card"><span class="label">OpenAI за сутки</span><strong id="system-calls">—</strong><small id="system-budget">—</small></div>
+    <div class="card"><span class="label">Виртуальный капитал</span><strong id="system-equity">—</strong><small id="system-cash">—</small></div>
+    <div class="card"><span class="label">Источники данных</span><strong id="system-quality">—</strong><small id="system-access">—</small></div>
+  </div>
+  <div id="system-services" class="legend" aria-live="polite"></div>
+  <p id="system-block" class="note"></p>
+</section>
+<section class="panel" aria-label="Журнал решений">
+  <h2>Решения модели и проверка риска</h2>
+  <div style="overflow:auto"><table><thead><tr><th>Время, МСК</th><th>Действие</th><th>Инструмент</th><th>Результат</th><th>Обоснование</th></tr></thead><tbody id="decision-journal"></tbody></table></div>
+  <details><summary>Заявки и события контроля</summary><div id="system-events"></div></details>
+</section>
 <div class="controls">
   <label for="instrument" class="eyebrow" style="color:var(--muted)">Инструмент</label>
   <select id="instrument" aria-label="Инструмент"></select>

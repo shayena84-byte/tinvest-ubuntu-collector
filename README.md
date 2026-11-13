@@ -1,396 +1,126 @@
-# T-Invest Ubuntu Collector v1.8.0
+# T-Invest Ubuntu Collector v1.11.0
 
-Сборщик **T-Invest API → Ubuntu Server → приватный ZIP-отчёт** на Python 3 без внешних библиотек. Только чтение: позиции, остатки, операции, тикеры/ISIN, последние котировки и стакан по ISIN. **Заявки не выставляет.**
+Инвестиционная система на Ubuntu: сбор рыночных данных, история стаканов в SQLite,
+локальная панель, модельные решения и виртуальная торговля **только T-Invest Sandbox**.
+Python 3.10+ и стандартная библиотека; внешние Python-пакеты не требуются.
 
-## Установка напрямую на Ubuntu
+Последний выпуск: [v1.11.0](https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/tag/v1.11.0).
+Полная инструкция обновления, настройки и ограничений — [V1_11_OPERATIONS.md](V1_11_OPERATIONS.md).
 
-Используйте архив исходников, автоматически создаваемый GitHub для ветки `main`.
+## Что входит
 
-```bash
-sudo apt update && sudo apt install -y python3 unzip curl
-cd "$HOME"
-curl -fL --retry 3 -o tinvest-ubuntu-collector.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/archive/refs/heads/main.zip
-unzip -o tinvest-ubuntu-collector.zip
-cd tinvest-ubuntu-collector-main
-python3 -m unittest discover -s tests -v
-bash install.sh
-```
+- Котировки и 10 уровней стакана, проверка качества и актуальности биржевого времени.
+- Локальная панель: цены, глубина, качество, службы, бюджет API, решения и исполнения.
+- Общие риск-лимиты и проверяющий модуль для OpenAI, Ollama и исторического агента.
+- Отдельный наблюдатель за портфелем/заявками без зависимости от модели и её биллинга.
+- SQLite-журнал данных, решений, причин отказа, заявок, частичных исполнений и комиссий.
+- Автономный аудит и причинная симуляция по последующим историческим стаканам.
+- Атомарный бюджет всех генераций, включая `dry-run`; неизменяемые релизные архивы.
 
-После установки создайте **отдельный Read-only токен** в [настройках T-Invest API](https://www.tbank.ru/invest/settings/api/) и выполните:
-
-```bash
-python3 ~/tinvest-collector/collector.py setup
-python3 ~/tinvest-collector/collector.py accounts
-python3 ~/tinvest-collector/collector.py snapshot --days 90
-```
-
-Токен вводится интерактивно и **не отображается в терминале**; хранится только на Ubuntu в файле `~/.config/tinvest-readonly/token` с правами доступа 600. **Никогда не отправляйте токен в чат и не публикуйте на GitHub.**
-
-## Другие команды
+## Установка и обновление
 
 ```bash
-python3 ~/tinvest-collector/collector.py snapshot --days 365
-python3 ~/tinvest-collector/collector.py snapshot --no-ops
-python3 ~/tinvest-collector/collector.py quote RU000A1092T7 --depth 10
-```
-
-Команда `accounts` показывает псевдонимы счетов, а не реальные номера. `snapshot` создаёт архив `~/tinvest-reports/tinvest_snapshot_*.zip` с `snapshot.json`, `positions.csv`, `operations.csv` и `README.txt`.
-
-**Важно:** итоговый ZIP содержит конфиденциальные финансовые сведения и **не зашифрован**. Его нельзя публиковать на GitHub. Для анализа загрузите этот ZIP отдельно в приватную беседу ChatGPT; автоматической передачи данных нет.
-
-## Проверка песочницы T-Invest (Sandbox)
-
-**Sandbox полностью отделён от реального счёта.** Используется другой адрес API и отдельный файл токена `~/.config/tinvest-readonly/sandbox-token`. Все действия `open` и `fund` выполняются только с виртуальными счетами.
-
-Если ранее создали токен Sandbox через обычный `collector.py setup`, один раз перенесите его в отдельный файл:
-
-```bash
-mv ~/.config/tinvest-readonly/token ~/.config/tinvest-readonly/sandbox-token
-chmod 600 ~/.config/tinvest-readonly/sandbox-token
-```
-
-Если токен ранее не сохраняли, выполните `python3 ~/tinvest-collector/sandbox.py setup`. **Не переносите Production-токен в sandbox-token.**
-
-Подключение к Sandbox с сохранением проверки TLS и вашего отдельного CA bundle:
-
-```bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py accounts
-```
-
-Если открытых счетов нет, создайте виртуальный и проверьте его:
-
-```bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py open
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py accounts
-```
-
-Пополнить выбранный счёт на 100 000 **виртуальных** рублей (замените `tb_...` псевдонимом из `accounts`):
-
-```bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py fund tb_123456789abc 100000
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/sandbox.py snapshot --days 7
-```
-
-Архивы Sandbox сохраняются отдельно в `~/tinvest-reports/sandbox/`. Данные песочницы не являются реальными позициями брокерского счёта. Торговых методов даже в Sandbox в сборщике нет: только чтение, создание и виртуальное пополнение счёта.
-
-Официальная документация: https://developer.tbank.ru/invest/intro/developer/sandbox/.
-
-## Автоматическая торговля в Sandbox каждые 5 минут (v1.2)
-
-**Экспериментальная стратегия.** Используется только виртуальный счёт, привязанный к Sandbox-токену; никакого доступа к реальным деньгам или заявкам. Это программный алгоритм EMA(9/21) + RSI(14) + импульс за 30 минут, а не непрерывное управление сделками моделью ChatGPT. Он может не заработать, не торговать при отсутствии сигналов или потерять все виртуальные деньги.
-
-Для установки обновлённого пакета скачайте релиз v1.2 и запустите установщик **от обычного пользователя Ubuntu**, указав обезличенный номер Sandbox-счёта:
-
-~~~bash
 cd ~
-wget -O tinvest_ubuntu_collector_v1.2.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.2/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.2.zip
-cd tinvest_ubuntu_collector
-bash install_autotrader.sh tb_3dcf45aba0ff
-~~~
+curl -fL --retry 3 -o tinvest_v1.11.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.11.0/tinvest_ubuntu_collector.zip
+mkdir -p tinvest-v1.11.0-source
+unzip -o tinvest_v1.11.0.zip -d tinvest-v1.11.0-source
+cd tinvest-v1.11.0-source/tinvest_ubuntu_collector
+bash install_v1_11.sh
+python3 ~/tinvest-collector/system_status.py
+```
 
-Установщик делает offline-тесты, копирует код в \`~/tinvest-collector\`, создаёт приватную конфигурацию \`~/.config/tinvest-readonly/autotrader.json\` и активирует \`systemd --user\` timer с интервалом 5 минут. Он **не переносит** токен в GitHub. Используется существующий файл \`~/.config/tinvest-readonly/sandbox-token\` и индивидуальный TLS bundle.
+Запускать от обычного пользователя Ubuntu. Установщик проверяет комплектность,
+тесты и импорт установленного кода, делает резервные копии, сохраняет ключи,
+SOCKS5, TLS bundle, настройки и историю. Торговые таймеры остаются выключенными.
+SHA-256 архива и проверка контрольной суммы описаны в полной инструкции.
+Для новой установки без ранее настроенного счёта использовать существующие
+команды `sandbox.py setup`, `accounts` и `open`; реальный токен не переносить в Sandbox.
+Псевдоним виртуального счёта передать как аргумент `bash install_v1_11.sh tb_...`.
+Финансирование виртуального счёта выполняется отдельно командой `sandbox.py fund`.
 
-Чтобы таймер продолжал работать после выхода из SSH:
+## Работа без OpenAI
 
-~~~bash
+```bash
+python3 ~/tinvest-collector/v19_health.py
+python3 ~/tinvest-collector/offline_market_audit.py --hours 168
+python3 ~/tinvest-collector/offline_replay.py --hours 168 --strategy compare
+python3 ~/tinvest-collector/system_status.py
+```
+
+Только наблюдателю нужны сеть и Sandbox-токен. Его режим по умолчанию `observe`
+не отправляет и не отменяет брокерские заявки:
+
+```bash
+systemctl --user enable --now tinvest-sandbox-supervisor.timer
+```
+
+При новой установке сбор котировок и панель включаются отдельно:
+
+```bash
+systemctl --user enable --now tinvest-sandbox-market.timer tinvest-sandbox-dashboard.service
 sudo loginctl enable-linger "$(whoami)"
-~~~
-
-Диагностика:
-
-~~~bash
-systemctl --user list-timers 'tinvest-sandbox-*'
-journalctl --user -u tinvest-sandbox-autotrader.service -n 60 --no-pager
-python3 ~/tinvest-collector/sandbox_autotrader.py status
-~~~
-
-**Сразу остановить автоматическую торговлю:**
-
-~~~bash
-systemctl --user disable --now tinvest-sandbox-autotrader.timer
-~~~
-
-Дополнительное выключение — изменить \`"enabled": false\` в файле \`~/.config/tinvest-readonly/autotrader.json\`.
-
-Общая схема ограничений: только ликвидные рублёвые акции \`SBER\`, \`MOEX\`, \`YDEX\`; не более 42% текущего капитала в одной новой позиции, общий лимит 82%, денежный резерв от 850 ₽, не более 8 заявок в день, пауза после 8% дневной просадки, стоп-лосс 2,5%, фиксация прибыли 4,5%, трейлинг-стоп 2,5%, минимальный интервал между заявками 20 минут. Торговля по умолчанию ограничена рабочими днями и временем 10:10–18:35 МСК. Скрипт может совершать 0 сделок за день, если условия не выполнены.
-
-Состояние и журналы хранятся локально в \`~/.local/state/tinvest-sandbox-trader/\`. Скрипт не допускает новых сделок при неизвестном результате предыдущей заявки. Песочница исполняет рыночные заявки по последней биржевой сделке, моделирует комиссию 0,05% и **не** начисляет купоны/дивиденды. Результаты в Sandbox не гарантируют доходности на реальном рынке.
-
-## Модельный агент вместо механической стратегии (v1.3)
-
-**Цель:** отдельный экземпляр модели OpenAI получает реальные рыночные данные из T-Invest Sandbox каждые пять минут и выбирает, какую виртуальную акцию купить, продать или не трогать, сколько лотов и почему. Система не ограничивается алгоритмами EMA/RSI: это признаки во входном контексте для рассуждения модели. Решение по каждой проверке новое; последние решения сохраняются локально.
-
-**Важно:** ChatGPT в текущем диалоге не работает непрерывно на Ubuntu. Для самостоятельных решений требуется отдельная подписка/оплата [OpenAI API](https://platform.openai.com/api-keys) и отдельный ключ. Использование API **не входит автоматически** в подписку ChatGPT. ИИ-решения выполняются новой моделью через API, а не текущим сеансом чата. По умолчанию \`gpt-6.1-sol\`. Не ожидайте гарантированной прибыли; результат песочницы плохо переносится на реальный рынок.
-
-### Установка v1.3
-
-~~~bash
-cd ~
-wget -O tinvest_ubuntu_collector_v1.3.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.3.zip
-cd tinvest_ubuntu_collector
-bash install_ai_agent.sh
-~~~
-
-Установщик сначала **отключает прежний алгоритм** \`tinvest-sandbox-autotrader.timer\` и устанавливает модельного агента, но НЕ включает его, пока нет локального API-ключа OpenAI. Это предотвращает одновременную торговлю двумя ботами.
-
-Создайте секретный API-ключ через https://platform.openai.com/api-keys, подключите отдельно биллинг API и введите ключ **только в Ubuntu**:
-
-~~~bash
-python3 ~/tinvest-collector/ai_sandbox_agent.py setup
-systemctl --user enable --now tinvest-sandbox-ai.timer
-sudo loginctl enable-linger "$(whoami)"
-~~~
-
-Проверка:
-
-~~~bash
-systemctl --user list-timers 'tinvest-sandbox-*'
-journalctl --user -u tinvest-sandbox-ai.service -n 70 --no-pager
-python3 ~/tinvest-collector/ai_sandbox_agent.py status
-~~~
-
-**Сразу остановить:**
-
-~~~bash
-systemctl --user disable --now tinvest-sandbox-ai.timer
-~~~
-
-Условия защиты: допускаются только виртуальные поручения \`SandboxService/PostSandboxOrder\`; модель не получает инструмента исполнения напрямую. Только разрешённые рублёвые акции TQBR. После каждой рекомендации бот проверяет валюту, лоты, баланс, суммарный риск, открытые поручения и лимиты. Никаких коротких продаж, маржинальной торговли или реальных счетов. При сбое получения данных или ответа модели **не торгуем**. Не более восьми виртуальных заявок и 110 обращений к модели в торговый день. Перед размещением происходит повторная проверка баланса. Денежный резерв по умолчанию от 850 ₽, лимит на новую позицию 42% и на общую экспозицию 82%. Модель оценивает доступные символы из списка \`watchlist\`.
-
-Модель имеет доступ к измеренным свечам и портфелю, но **новостная лента пока не интегрирована**: нельзя полагаться, что она знает последние корпоративные новости. Операционная эффективность не проверялась на реальном брокерском счёте и не гарантируется. Пока не подтверждены правильные ответы API и виртуальные поручения на Ubuntu — это экспериментальная версия.
-
-Файлы \`~/.config/tinvest-readonly/openai-api-key\`, \`sandbox-token\`, \`ai-agent.json\` и отчёты портфеля никогда не публикуйте в GitHub. Модель получает только обезличенные финансовые показатели и информацию о биржевых инструментах — без токена, номеров счетов и истории платежных реквизитов. Журнал решений хранится локально в \`~/.local/state/tinvest-sandbox-trader/ai-decisions.jsonl\`.
-
-### Почему модель, а не механические правила
-
-Программа снабжает модель выборкой свечей, EMA, RSI, динамикой двух часов, текущим портфелем и предыдущими рекомендациями; модель сама формирует конкретную торговую гипотезу и размер заявки. Технические индикаторы — исходные данные, но не условия автоматического входа. Независимый модуль валидации предотвращает операции с неразрешёнными инструментами, недоступными лотами и превышением лимитов.
-
-## Исправление ошибочного запроса GetCandles (v1.3.1)
-
-Если агент показывает `HTTP 400 для trader_candles`, обновите сборщик до v1.3.1. В запросе пятиминутных свечей теперь используется консервативное окно 36 часов вместо семи суток, убран необязательный параметр `candleSourceType`, добавлена безопасная диагностика текста ошибки без токена.
-
-**После установки автоматический таймер НЕ запускается**, пока не выполнен успешный однократный dry-run. Остановите его до обновления:
-
-```bash
-systemctl --user disable --now tinvest-sandbox-ai.timer
-cd ~
-wget -O tinvest_ubuntu_collector_v1.3.1.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.1/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.3.1.zip
-cd tinvest_ubuntu_collector
-bash install_ai_agent.sh
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/ai_sandbox_agent.py dry-run
 ```
 
-Если в журнале появилась запись `ai_decision`, включите периодический запуск:
+Они используют существующую настройку SOCKS5 и TLS. Панель доступна только на
+`http://127.0.0.1:8787`; для Windows — SSH-туннель:
 
 ```bash
-systemctl --user enable --now tinvest-sandbox-ai.timer
+ssh -L 8787:127.0.0.1:8787 user@IP_UBUNTU
 ```
 
-Если снова возникает HTTP 400, сохраните именно сообщение об ошибке после обновления: новый сборщик добавляет диагностическую информацию. Это ещё не подтверждённая реальным Sandbox проверка, потому что токен хранится исключительно на вашем Ubuntu.
+## Модельные решения
 
-## OpenAI API HTTP 403 — диагностика (v1.3.2)
+Отдельный ключ OpenAI API хранится только в `~/.config/tinvest-readonly/openai-api-key`;
+Sandbox-токен — отдельно в `sandbox-token`. Подписка ChatGPT и оплата API независимы.
+Модель получает обезличенные показатели и возвращает JSON; брокерские инструменты
+ей не предоставляются. Ключ, существующая выбранная модель и настройки сохраняются.
+Ollama — опциональный провайдер; установка её не требует и не загружает моделей.
 
-Если после исправления GetCandles появляется `Ошибка OpenAI API: HTTP 403`, значит T-Invest Sandbox запросы уже прошли, но модель не получила ответа. Причину нельзя определить по одному статусу — нужны машиночитаемые `error.type` и `error.code`. Версия v1.3.2 показывает только эти безопасные поля и **никогда не выводит токены, тело ответа или персональные данные**.
+Общие потолки: покупка до 10% капитала, экспозиция до 50%, дневной порог потерь 3%,
+до 3 виртуальных заявок и 24 генераций за день МСК. Между генерациями по умолчанию
+30 минут; ошибки и `dry-run` тоже учитываются. Уверенность модели не является
+измеренной вероятностью прибыли. Проверяющий модуль независимо проверяет лоты,
+баланс, свежий стакан, статус торгов и лимиты перед отправкой лимитной Sandbox-заявки.
+
+После проверки доступа, биллинга, данных и одного `dry-run` оператор может включить:
 
 ```bash
-systemctl --user disable --now tinvest-sandbox-ai.timer
-cd ~
-wget -O tinvest_ubuntu_collector_v1.3.2.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.2/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.3.2.zip
-cd tinvest_ubuntu_collector
-bash install_ai_agent.sh
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/ai_sandbox_agent.py diagnose
+systemctl --user enable --now tinvest-sandbox-openai.timer
 ```
 
-Команда `diagnose` делает запрос **GET /v1/models/gpt-6.1-sol**, чтобы проверить доступ к модели без генерации ответа и без торговых операций. Если получаете `unsupported_country_region_territory`, проверьте официальную [географическую доступность API](https://help.openai.com/en/articles/5347006-openai-api-supported-countries-and-territories) и используйте только разрешённое размещение; не обходите региональные ограничения. Если `insufficient_permissions` или `invalid_api_key`, проверьте права API-проекта и созданный ключ на [OpenAI Platform](https://platform.openai.com/api-keys). Если доступ подтверждён, запустите `dry-run`, затем включите таймер:
+Остановка:
 
 ```bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" python3 ~/tinvest-collector/ai_sandbox_agent.py dry-run
-systemctl --user enable --now tinvest-sandbox-ai.timer
+systemctl --user disable --now tinvest-sandbox-openai.timer tinvest-sandbox-ai.timer tinvest-sandbox-local-ai.timer tinvest-sandbox-autotrader.timer tinvest-sandbox-supervisor.timer
 ```
 
-При `HTTP 403` **не включайте** таймер: он лишь будет повторять неуспешный вызов и не сможет торговать.
+## Данные и ограничения
 
-## v1.3.3 — исправление неоднозначных UID для акций
+Ключи, настройки, рабочие базы, журналы и финансовые ZIP-отчёты являются частными;
+не публиковать их на GitHub. Панель только читает локальные данные и не управляет
+торговлей. Облигационные котировки выражены в процентах номинала без НКД;
+симулятор исключает бумаги без подтверждённой лотности и единиц RUB/акция.
 
-Если команда `sandbox.py quote SBER` выводила несколько одинаковых тикеров SBER с разными UID, обновите клиент. Вместо выбора по первому совпадению теперь для акций используется точная связка **ticker + classCode=TQBR** через `GetInstrumentBy`. Точно такой же поиск использует Sandbox AI Trader. Если API возвращает неправильную доску или не подтверждает инструмент, программа останавливается без сделки.
+Пятиминутные снимки дают приближённые сценарии исполнения, а не точный биржевой
+бэктест. Sandbox и симуляции не подтверждают доходность на реальном рынке.
+`collector.py` сохраняет отдельный режим чтения реального счёта и приватного
+экспорта отчётов; торговых production endpoint в движках нет.
 
-Обновление:
+## Разработка и выпуск
 
 ```bash
-cd ~
-wget -O tinvest_ubuntu_collector_v1.3.3.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.3/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.3.3.zip
-cd tinvest_ubuntu_collector
-bash install_ai_agent.sh
+python3 -m unittest discover -s tests -q
+node --check dashboard.js
+python3 build_release.py --output .build/tinvest_ubuntu_collector.zip
 ```
 
-Проверка котировок (без торговых заявок):
+Единственный источник номера версии — `version.py`; набор устанавливаемых файлов —
+`package_manifest.json`. CI проверяет исходники, упаковку и установку. Релиз собирается
+из совпадающего тега `vX.Y.Z`, содержит `BUILD.json` и отдельную SHA-256; существующие
+архивы не перезаписываются. Исторические инструкции предыдущих версий сохранены
+в отдельных файлах и не являются текущим способом установки.
 
-```bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" python3 ~/tinvest-collector/sandbox.py quote SBER
-```
-
-В `quote` для указанной акции больше не должно быть списка из нескольких UID. Автоторговля не включается этим обновлением. Региональное ограничение OpenAI API остаётся отдельным вопросом; прокси не изменяет правила доступности API.
-
-## v1.3.4 — выбор облигации по ISIN + режим торгов
-
-Т-Банк возвращает для одного ISIN несколько UID для разных торговых режимов. Для **Омега БО-01** (\`RU000A1092T7\`) доступны, среди прочего, OCBR, PTOB и TQCB. По умолчанию для облигации по 12-символьному ISIN сборщик ищет **только TQCB**, сверяет UID/ISIN/classCode через \`GetInstrumentBy\` и только затем запрашивает котировки. Ничего не угадывает и не выставляет заявок.
-
-Проверка после обновления:
-
-~~~bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" \
-proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" \
-python3 ~/tinvest-collector/sandbox.py quote RU000A1092T7
-~~~
-
-Для явного выбора режима:
-
-~~~bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" \
-proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" \
-python3 ~/tinvest-collector/sandbox.py quote RU000A1092T7 --board TQCB
-~~~
-
-Если в другом инструменте нужен альтернативный режим, укажите его через \`--board\`; без проверки соответствия инструмент не выбирается. Значение TQCB подтверждается списком режимов, полученным из Sandbox для этого выпуска.
-
-**Обновление (не включает AI-таймер):**
-
-~~~bash
-systemctl --user disable --now tinvest-sandbox-ai.timer
-cd ~
-wget -O tinvest_ubuntu_collector_v1.3.4.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.3.4/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.3.4.zip
-cd tinvest_ubuntu_collector
-bash install_ai_agent.sh
-~~~
-
-Ограничение: доступность биржевых данных в Sandbox проверяется на вашем сервере; автоматические тесты эмулируют ответы API. Реальные покупки по-прежнему запрещены кодом. Региональное ограничение OpenAI API остаётся отдельным вопросом.
-
-## v1.4.0 — непрерывная история котировок и стаканов в SQLite
-
-Добавлен отдельный **Sandbox Market Recorder**. Каждые 5 минут он через настроенный SOCKS5 192.168.202.50:1080 получает биржевые котировки SBER/TQBR и Омега БО-01/TQCB, сохраняет 10 уровней bid/ask и метрики ликвидности в приватную SQLite-базу на Ubuntu.
-
-Это **не торговый бот**: никаких операций покупки/продажи, OpenAI API и доступа к Production. AI-таймер по-прежнему отключён.
-
-Установка:
-
-~~~bash
-cd ~
-wget -O tinvest_ubuntu_collector_v1.4.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.4.0/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.4.0.zip
-cd tinvest_ubuntu_collector
-bash install_market_recorder.sh
-sudo loginctl enable-linger "$(whoami)"
-~~~
-
-Контроль:
-
-~~~bash
-systemctl --user list-timers 'tinvest-sandbox-market*'
-journalctl --user -u tinvest-sandbox-market.service -n 60 --no-pager
-python3 ~/tinvest-collector/market_recorder.py report --hours 24
-python3 ~/tinvest-collector/market_recorder.py export --hours 168
-~~~
-
-Подробная инструкция, схема SQLite, правила точности и расширение инструментов — [MARKET_RECORDER.md](MARKET_RECORDER.md).
-
-## v1.5.0 — проверка качества котировок и локальный веб-дашборд
-
-Исправлено чтение временной метки REST стакана из **orderbookTs**. Добавлены статусы valid/stale/unverified/invalid, учёт пересечённых книг (Bid >= Ask), отдельная таблица аномалий, миграция существующей SQLite-базы v1 с сохранением истории, диаграммы цен, bid/ask, спредов и глубины стакана.
-
-**Установка поверх v1.4.0:**
-
-~~~bash
-cd ~
-wget -O tinvest_ubuntu_collector_v1.5.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.5.0/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.5.0.zip
-cd tinvest_ubuntu_collector
-bash install_market_quality.sh
-sudo loginctl enable-linger "$(whoami)"
-~~~
-
-Установщик сохраняет локальную резервную копию SQLite, делает миграцию базы и запускает безопасную localhost-панель по адресу http://127.0.0.1:8787. Для Windows используйте SSH-туннель к Ubuntu: ssh -L 8787:127.0.0.1:8787 user@IP_UBUNTU.
-
-**Полная инструкция:** [MARKET_QUALITY_DASHBOARD.md](MARKET_QUALITY_DASHBOARD.md).
-
-Сбор рыночных данных остаётся только на чтение, через существующий SOCKS5. Никаких торговых команд и передачи API-токена через панель. Все торговые таймеры остаются выключенными.
-
-## v1.6.0 — полный стакан, симулятор исполнения и локальный Sandbox AI
-
-Новый дашборд (только на localhost) отображает все 10 уровней покупки/продажи, дисбаланс, примерную средневзвешенную котировку исполнения для 1/10/20/50/100 лотов, фильтры аномалий и историю качества. Сбор расширен на дополнительные акции и облигации (до 10 инструментов).
-
-Добавлен независимый торговый агент на локальной модели Ollama / Qwen3:4b. Каждые пять минут в торговую сессию агент получает наблюдения Sandbox и предлагает BUY/SELL/HOLD. Только отдельный проверяющий модуль может отправить виртуальную заявку; ни один production endpoint не используется. OpenAI API не требуется.
-
-**Обновление поверх v1.5.0:**
-
-~~~bash
-cd ~
-wget -O tinvest_ubuntu_collector_v1.6.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.6.0/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.6.0.zip
-cd tinvest_ubuntu_collector
-bash install_v1_6.sh
-~~~
-
-Если Ollama отсутствует, торговый таймер не запускается; сначала установите и загрузите локальную модель. Полная инструкция и ограничения: [V1_6_AUTONOMOUS_SANDBOX.md](V1_6_AUTONOMOUS_SANDBOX.md).
-
-Это экспериментальная система: не гарантирует доходность, не заменяет решения профессионального управляющего и не затрагивает реальные деньги.
-
-## v1.7.0 — OpenAI Responses API основной движок для Sandbox
-
-Версия **v1.7.0** использует уже сохранённый OpenAI API-ключ вместо обязательной Ollama. Система анализирует инструменты, пропускает неподтверждённые/устаревшие стаканы, обрабатывает структурированные ответы OpenAI и при выполнении всех лимитов отправляет только **виртуальные Sandbox-заявки**. Все улучшения дашборда из v1.6.0 сохраняются.
-
-Обновление:
-
-~~~bash
-cd ~
-wget -O tinvest_ubuntu_collector_v1.7.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.7.0/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.7.0.zip
-cd tinvest_ubuntu_collector
-bash install_openai_backend.sh
-~~~
-
-Существующий ключ ~/.config/tinvest-readonly/openai-api-key используется автоматически; Ollama не нужна. Установщик делает резервную копию SQLite, обновляет UI, отключает прежние торговые таймеры и проверяет выбранную модель OpenAI. Если доступ подтверждён, включается только таймер tinvest-sandbox-openai.timer.
-
-Документация: [V1_7_OPENAI_SANDBOX.md](V1_7_OPENAI_SANDBOX.md). Региональная и проектная доступность OpenAI API определяется действующими условиями провайдера, и установка не обходит такие ограничения.
-
-## v1.8.0 — динамический торговый статус вместо ограниченного времени сессии
-
-OpenAI Trader больше не отключается автоматически после 18:35 МСК. В v1.8.0 доступность торговли каждой акции определяется по **GetTradingStatus конкретного UID** и трём обязательным условиям: NORMAL_TRADING, apiTradeAvailableFlag и marketOrderAvailableFlag. Аукционы, закрытые и неподтверждённые статусы блокируют заявки; перед торговым поручением статус запрашивается повторно.
-
-Вечерние, специальные и выходные сессии оцениваются **по фактическому API**, без предположений о торговом календаре.
-
-**Обновление поверх v1.7.0:**
-
-~~~bash
-cd ~
-wget -O tinvest_ubuntu_collector_v1.8.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.8.0/tinvest_ubuntu_collector.zip
-unzip -o tinvest_ubuntu_collector_v1.8.0.zip
-cd tinvest_ubuntu_collector
-bash upgrade_dynamic_session.sh
-~~~
-
-Установка не меняет ключи, SQLite, конфигурацию SOCKS5 или systemd override. Существующий торговый таймер оставляется выключенным для проверки.
-
-**Проверить статус каждой акции без OpenAI и без торговли:**
-
-~~~bash
-SSL_CERT_FILE="$HOME/.config/tinvest-readonly/ca-bundle.pem" proxychains4 -f "$HOME/.config/tinvest-readonly/proxychains.conf" python3 ~/tinvest-collector/openai_quality_trader.py session
-~~~
-
-См. [V1_8_DYNAMIC_TRADING_STATUS.md](V1_8_DYNAMIC_TRADING_STATUS.md). Используется только T-Invest Sandbox, реальная торговля недоступна.
-
-## Ограничения
-
-- Реальная авторизация на вашем счёте ещё не проверена. Юнит-тесты используют синтетические данные.
-- Котировки облигаций — проценты от остаточного номинала без НКД. Учитывайте валюту, амортизацию, комиссии и дату расчётов.
-- История операций ограничена 100 страницами за один запуск, при неполноте будет предупреждение.
-- Инструмент не подключает ВТБ, его отчёты анализируются отдельно.
-- Если возникают ошибки TLS, не отключайте проверку сертификатов.
-- Для Production требуется доступ Ubuntu к `invest-public-api.tbank.ru`, для Sandbox — к `sandbox-invest-public-api.tbank.ru`.
-
-Официальная документация: https://developer.tbank.ru/invest/intro/intro
+Официальная документация:
+[T-Invest API](https://developer.tbank.ru/invest/intro/intro),
+[Sandbox](https://developer.tbank.ru/invest/intro/developer/sandbox),
+[тип идентификатора заявки](https://developer.tbank.ru/invest/api/sandbox-service-get-sandbox-order-state).

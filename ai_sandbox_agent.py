@@ -21,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import sandbox_autotrader as t
+import risk_policy
 
 c = t.c
 CFG_DIR = Path.home() / ".config" / "tinvest-readonly"
@@ -33,14 +34,14 @@ DEFAULT_AI = {
     "enabled": True,
     "model": "gpt-6.1-sol",
     "watchlist": ["SBER", "MOEX", "YDEX", "ROSN", "LKOH", "NVTK", "T", "VTBR"],
-    "minimum_confidence": 0.65,
-    "max_ai_calls_per_day": 110,
-    "max_trade_fraction": 0.42,
-    "max_exposure_fraction": 0.82,
+    "minimum_confidence": 0.70,
+    "max_ai_calls_per_day": 24,
+    "max_trade_fraction": 0.10,
+    "max_exposure_fraction": 0.50,
     "minimum_cash_rub": 850,
-    "max_orders_per_day": 8,
+    "max_orders_per_day": 3,
     "cooldown_minutes": 20,
-    "max_daily_loss_fraction": 0.08
+    "max_daily_loss_fraction": 0.03
 }
 
 RESPONSE_SCHEMA = {
@@ -94,7 +95,7 @@ def ai_config():
     cfg={**DEFAULT_AI, **t.load_json(AI_CFG_FILE,{})}
     if set(cfg) - set(DEFAULT_AI):
         raise c.APIError("Некорректный файл ai-agent.json")
-    if not cfg["enabled"]:
+    if cfg["enabled"] is not True:
         raise c.APIError("AI-агент остановлен в конфигурации")
     if not isinstance(cfg["watchlist"],list) or not cfg["watchlist"] or len(cfg["watchlist"])>12:
         raise c.APIError("Некорректный список инструментов")
@@ -109,7 +110,7 @@ def ai_config():
         raise c.APIError("Неверный лимит API-запросов")
     if not 0 < int(cfg["max_orders_per_day"]) <= 20:
         raise c.APIError("Неверный лимит заявок")
-    return cfg
+    return risk_policy.limits(cfg)
 
 def log(kind, **items):
     STATE_DIR.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -156,11 +157,13 @@ def decode_response(raw):
         raise c.APIError("Неизвестное действие")
     if not isinstance(obj["lots"],int) or isinstance(obj["lots"],bool) or not 0<=obj["lots"]<=100000:
         raise c.APIError("Необычное количество лотов")
-    if not isinstance(obj["confidence"],(float,int)) or not 0<=obj["confidence"]<=1:
+    if isinstance(obj["confidence"],bool) or not isinstance(obj["confidence"],(float,int)) or not 0<=obj["confidence"]<=1:
         raise c.APIError("Некорректная уверенность")
     if not isinstance(obj["reason"],str) or not isinstance(obj["risks"],str) or not 15<=len(obj["reason"])<=1200:
         raise c.APIError("Нет осмысленного объяснения")
-    if not 0<=obj["horizon_minutes"]<=30000:
+    if not isinstance(obj["symbol"],str) or len(obj["symbol"])>30:
+        raise c.APIError("Некорректный инструмент модели")
+    if isinstance(obj["horizon_minutes"],bool) or not isinstance(obj["horizon_minutes"],int) or not 0<=obj["horizon_minutes"]<=30000:
         raise c.APIError("Некорректный торговый горизонт")
     return obj
 
@@ -212,6 +215,11 @@ def diagnose_api():
 
 
 def ask_openai(key, model, snapshot):
+    from decision_providers import OpenAIProvider
+    return OpenAIProvider().decide(key, model, snapshot)
+
+
+def _request_openai(key, model, snapshot, max_output_tokens=2400):
     payload={
         "model":model,
         "instructions":SYSTEM,
@@ -219,7 +227,7 @@ def ask_openai(key, model, snapshot):
         "reasoning":{"effort":"medium"},
         "text":{"format":{"type":"json_schema","name":"sandbox_trade_decision","strict":True,
                          "schema":RESPONSE_SCHEMA}},
-        "max_output_tokens":2400,
+        "max_output_tokens":max_output_tokens,
         "store":False
     }
     req=Request("https://api.openai.com/v1/responses",
@@ -296,112 +304,14 @@ def build_context(api,account_id,ai_cfg,now):
     return result,portfolio,positions
 
 def validate(decision,context,ai_cfg,st,now):
-    symbol=decision["symbol"].upper().strip()
-    action=decision["action"]
-    if action=="HOLD":
-        if symbol!="NONE" or decision["lots"]!=0:
-            return None,"Invalid HOLD"
-        return None,"HOLD"
-    if decision["confidence"] < ai_cfg["minimum_confidence"]:
-        return None,"Confidence below threshold"
-    candidates={a["symbol"]:a for a in context["tradable"]}
-    if symbol not in candidates:
-        return None,"Non-tradable symbol"
-    instrument=candidates[symbol]
-    qty=decision["lots"]
-    if qty<1:
-        return None,"Zero lots"
-    if st.get("orders_today",0)>=ai_cfg["max_orders_per_day"]:
-        return None,"Order count limit"
-    if t.order_recent(st,now,ai_cfg["cooldown_minutes"]):
-        return None,"Cooldown active"
-    equity=Decimal(context["equity_rub"])
-    cash=Decimal(context["cash_rub"])
-    invested=Decimal(context["invested_rub_estimate"])
-    price=Decimal(instrument["price_rub"])
-    lot_cost=price*instrument["lot"]*Decimal("1.002")
-    notional=price*instrument["lot"]*qty
-    if action=="BUY":
-        if instrument["owned_lots"]>0:
-            return None,"Already held; prevent unintended averaging and concentration"
-        start=t.d(st.get("start_equity","0"))
-        if start and equity<start*(1-Decimal(str(ai_cfg["max_daily_loss_fraction"]))):
-            return None,"Daily loss limit"
-        max_amount=min(Decimal(str(ai_cfg["max_trade_fraction"]))*equity,
-                       Decimal(str(ai_cfg["max_exposure_fraction"]))*equity-invested,
-                       cash-Decimal(str(ai_cfg["minimum_cash_rub"])))
-        if max_amount<=0 or lot_cost*qty>max_amount:
-            return None,"Cash, single-trade, or total exposure cap"
-    else:
-        if instrument["owned_lots"]<qty:
-            return None,"Cannot sell more lots than held"
-    return {"action":action,"symbol":symbol,"lots":qty,"instrument":instrument},None
+    return risk_policy.validate(decision,context,ai_cfg,st,now)
+
 
 def run(dry_run=False):
-    now=datetime.now(timezone.utc)
-    cfg=ai_config()
-    if not t.market_hours(now):
-        log("closed_market")
-        return
-    old_cfg=t.config()
-    if c.TOKEN_PATH.name!="sandbox-token":
-        raise c.APIError("Отсутствует изоляция Sandbox-токена")
-    if not isinstance(old_cfg["account_ref"],str):
-        raise c.APIError("Некорректная учётная запись песочницы")
-    key=read_key()
-    api=t.s.SandboxAPI(c.token_read())
-    account_id=t.get_account(api,old_cfg["account_ref"])
-    st=init_ai_state(t.load_json(t.STATE_FILE,{}),now)
-    # Existing unverified orders block new trades.
-    if t.reconcile_pending(api,account_id,st,now):
-        log("pending_order_skip")
-        return
-    open_orders=api.call("trader_orders",{"accountId":account_id}).get("orders",[])
-    if open_orders:
-        log("active_order_skip",count=len(open_orders))
-        return
-    if st["ai_calls_today"]>=cfg["max_ai_calls_per_day"]:
-        log("api_daily_budget_reached")
-        return
-    ctx,_,_=build_context(api,account_id,cfg,now)
-    st=t.initialize_day(st,now,Decimal(ctx["equity_rub"]))
-    t.atomic_save(t.STATE_FILE,st)
-    # Persist count BEFORE API call; failures count, avoiding runaway bill.
-    st["ai_calls_today"]+=1
-    t.atomic_save(t.STATE_FILE,st)
-    decision,usage=ask_openai(key,cfg["model"],ctx)
-    log("ai_decision",action=decision["action"],symbol=decision["symbol"],
-        lots=decision["lots"],confidence=decision["confidence"],
-        reason=decision["reason"],risks=decision["risks"],usage=usage,dry_run=dry_run)
-    trade,error=validate(decision,ctx,cfg,st,now)
-    if trade is None:
-        log("decision_not_executed",result=error)
-        return
-    if dry_run:
-        log("simulation_only",action=trade["action"],symbol=trade["symbol"],lots=trade["lots"])
-        return
-    # Recheck holdings and cash immediately before submission.
-    new_portfolio=api.call("portfolio",{"accountId":account_id,"currency":"RUB"})
-    new_positions=api.call("positions",{"accountId":account_id})
-    equity_new=t.d(new_portfolio.get("totalAmountPortfolio"))
-    cash_new=t.rub_cash(new_positions)
-    if equity_new<=0 or abs(equity_new-Decimal(ctx["equity_rub"]))>equity_new*Decimal(".03"):
-        log("portfolio_changed_abort")
-        return
-    inst=trade["instrument"]
-    current_lots=t.held_lots(new_portfolio,inst["uid"],inst["lot"])
-    if trade["action"]=="SELL" and current_lots<trade["lots"]:
-        log("position_changed_abort")
-        return
-    if trade["action"]=="BUY":
-        if current_lots>0 or cash_new<Decimal(ctx["cash_rub"])*Decimal(".95"):
-            log("cash_changed_abort")
-            return
-    spec={"ticker":trade["symbol"],"uid":inst["uid"],"lot":inst["lot"]}
-    t.post_order(api,account_id,spec,trade["action"],trade["lots"],
-                 Decimal(inst["price_rub"]),"ai: "+decision["reason"][:100],st,now)
-    log("execution",action=trade["action"],symbol=trade["symbol"],
-        lots=trade["lots"],result="Sandbox order submitted")
+    # Historical CLI now uses the same quality/risk/budget engine as the main service.
+    import openai_quality_trader
+    return openai_quality_trader.one_cycle(dry_run=dry_run)
+
 
 def main():
     import argparse

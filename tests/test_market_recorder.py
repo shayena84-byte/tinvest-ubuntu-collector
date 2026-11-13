@@ -78,7 +78,7 @@ class TestMarketRecorder(unittest.TestCase):
             self.assertEqual(first,again)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0],1)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM book_levels").fetchone()[0],4)
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],m.SCHEMA_VERSION)
             self.assertEqual(self.dbpath.stat().st_mode & 0o777,0o600)
             levels=db.execute("SELECT side,level,price,lots FROM book_levels WHERE snapshot_id=? "
                               "ORDER BY side,level",(first,)).fetchall()
@@ -161,7 +161,7 @@ class TestMarketRecorder(unittest.TestCase):
         db.close()
         migrated=rec.connect(self.dbpath)
         try:
-            self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0],2)
+            self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0],m.SCHEMA_VERSION)
             self.assertEqual(migrated.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0],1)
             self.assertEqual(migrated.execute("SELECT quality_status FROM snapshots").fetchone()[0],"invalid")
             self.assertEqual(migrated.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0],1)

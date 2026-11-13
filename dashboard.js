@@ -130,6 +130,7 @@ function drawChart(id,rows,series,opts) {
     for(const p of data){
       const y=p.values[si];
       if(y===null){flush();continue}
+      if(run.length && p.ts-run[run.length-1].ts>600000)flush();
       run.push({ts:p.ts,y});
     }
     flush();
@@ -220,6 +221,7 @@ function render(){
   renderAnomalies(filteredAnomalies());
 }
 async function load(){
+  loadSystem();
   const button=$("refresh"),badge=$("conn");
   button.disabled=true;
   badge.textContent="● Обновление…";
@@ -357,3 +359,46 @@ document.addEventListener("DOMContentLoaded",()=>{
   load();
   setInterval(load,60000);
 });
+
+const SYSTEM_LABELS={recorder:"Сборщик",supervisor:"Контроль позиций",trader:"Модельный агент",market_status:"Торги"};
+const RESULT_LABELS={started:"Начат",hold:"Наблюдение",rejected:"Отклонено проверкой",dry_run:"Проверка без сделки",submitted:"Заявка отправлена",budget_blocked:"Лимит API",provider_error:"Ошибка модели",market_changed:"Статус торгов изменился",decided:"Решение принято",risk_pause:"Пауза риска",provider_blocked:"API заблокирован",pending_order:"Сверка заявки",budget_pause:"Пауза бюджета",ok:"Норма",collection_error:"Ошибка сбора",risk_alert:"Порог риска",open:"Есть доступные инструменты",closed_or_unverified:"Закрыто или не подтверждено"};
+async function loadSystem(){
+  try {
+    const response=await fetch("/api/system",{cache:"no-store"});
+    if(!response.ok)throw Error("status unavailable");
+    const data=await response.json();
+    $("system-version").textContent="v"+data.version;
+    $("system-stamp").textContent="Состояние на "+stamp(data.generated_utc)+" · время МСК";
+    const budget=data.budget||{}, portfolio=data.portfolio;
+    $("system-calls").textContent=budget.calls==null?"—":budget.calls+" / "+budget.max_calls;
+    $("system-budget").textContent=budget.actual_cost_usd==null?"Стоимость не определена; тариф модели не задан":
+      "Учтённая стоимость: $"+num(budget.actual_cost_usd,4)+" · оценено вызовов: "+budget.priced_calls;
+    $("system-equity").textContent=portfolio?num(portfolio.equity_rub)+" ₽":"Нет наблюдений";
+    $("system-cash").textContent=portfolio?"Деньги: "+num(portfolio.cash_rub)+" ₽ · "+stamp(portfolio.utc):"Запустите наблюдение за Sandbox";
+    const market=data.market||{};
+    $("system-quality").textContent=market.configured==null?"Нет данных":market.healthy+" / "+market.configured;
+    $("system-access").textContent="Инструментов с актуальными стаканами";
+    const services=$("system-services");services.replaceChildren();
+    for(const [key,label] of Object.entries(SYSTEM_LABELS)){
+      const record=(data.services||[]).find(x=>x.service===key);
+      const status=record?(RESULT_LABELS[record.status]||record.status):"Нет наблюдений";
+      services.append(node("span","",label+": "+status+(record&&!record.recent?" · наблюдение устарело":"")));
+    }
+    $("system-block").textContent=data.openai_block?.blocked?
+      "OpenAI заблокирован: "+data.openai_block.reason+". Контроль заявок работает независимо при запущенной службе наблюдения.":
+      "Только Sandbox. Панель показывает записанные наблюдения и не отправляет торговых команд.";
+    const body=$("decision-journal");body.replaceChildren();
+    for(const cycle of data.recent_decisions||[]){
+      let decision={};try{decision=JSON.parse(cycle.decision_json||"{}")}catch{}
+      const tr=node("tr");appendCell(tr,stamp(cycle.utc));appendCell(tr,decision.action||"—");
+      appendCell(tr,decision.symbol||"—");appendCell(tr,(RESULT_LABELS[cycle.status]||cycle.status)+(cycle.validation&&cycle.validation!=="approved"?" · "+cycle.validation:""));
+      appendCell(tr,decision.reason||"Ожидание результата");body.append(tr);
+    }
+    if(!body.children.length){const tr=node("tr");appendCell(tr,"Решений пока нет");body.append(tr)}
+    const events=$("system-events");events.replaceChildren();
+    for(const order of data.orders||[]){events.append(node("p","desc",stamp(order.created_utc)+" · "+order.symbol+" · "+order.side+" · "+order.filled_lots+" / "+order.requested_lots+" лотов · "+order.status))}
+    for(const event of data.recent_events||[]){events.append(node("p","desc",stamp(event.utc)+" · "+event.kind+" · "+event.details_json))}
+  } catch {
+    $("system-stamp").textContent="Состояние системы временно недоступно";
+  }
+}
