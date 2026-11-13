@@ -17,4 +17,4 @@ jobs:
           for task_script in *.sh; do bash -n "$task_script"; done
           node --check dashboard.js
           node tests/test_dashboard_dom.js
-          python3 -m unittest discover -s tests -q
+          python3 run_offline_tests.py

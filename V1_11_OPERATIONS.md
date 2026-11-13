@@ -1,4 +1,4 @@
-# v1.11.0 — надёжность, журнал исполнения и автономные проверки
+# v1.11.1 — надёжность, журнал исполнения и автономные проверки
 
 Версия объединяет исправления v1.10 и новые инструменты анализа. Торговля
 по-прежнему разрешена только через T-Invest Sandbox. OpenAI API не нужен для
@@ -31,17 +31,17 @@
 
 ```bash
 cd ~
-curl -fL --retry 3 -o tinvest_v1.11.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.11.0/tinvest_ubuntu_collector.zip
-curl -fL --retry 3 -o tinvest_v1.11.0.zip.sha256 https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.11.0/tinvest_ubuntu_collector.zip.sha256
+curl -fL --retry 3 -o tinvest_v1.11.1.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.11.1/tinvest_ubuntu_collector.zip
+curl -fL --retry 3 -o tinvest_v1.11.1.zip.sha256 https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.11.1/tinvest_ubuntu_collector.zip.sha256
 python3 - <<'PY'
 import hashlib
 from pathlib import Path
-expected=Path('tinvest_v1.11.0.zip.sha256').read_text().split()[0]
-assert hashlib.sha256(Path('tinvest_v1.11.0.zip').read_bytes()).hexdigest()==expected, 'Checksum mismatch'
+expected=Path('tinvest_v1.11.1.zip.sha256').read_text().split()[0]
+assert hashlib.sha256(Path('tinvest_v1.11.1.zip').read_bytes()).hexdigest()==expected, 'Checksum mismatch'
 PY
-mkdir -p tinvest-v1.11.0-source
-unzip -o tinvest_v1.11.0.zip -d tinvest-v1.11.0-source
-cd tinvest-v1.11.0-source/tinvest_ubuntu_collector
+mkdir -p tinvest-v1.11.1-source
+unzip -o tinvest_v1.11.1.zip -d tinvest-v1.11.1-source
+cd tinvest-v1.11.1-source/tinvest_ubuntu_collector
 bash install_v1_11.sh
 python3 ~/tinvest-collector/system_status.py
 ```

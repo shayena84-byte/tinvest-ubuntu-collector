@@ -10,11 +10,14 @@ from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import market_recorder as m
+import trade_ledger as ledger
 
 
 class TestMarketRecorder(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
+        isolated=patch.object(ledger,"DB_PATH",Path(self.tmp.name)/"ledger.sqlite3")
+        isolated.start();self.addCleanup(isolated.stop)
         self.dbpath=Path(self.tmp.name)/"snapshots.sqlite3"
         self.now=datetime(2026,11,12,11,56,30,tzinfo=timezone.utc)
         self.inst={"uid":"correct-bond-uid","ticker":"RU000A1092T7","isin":"RU000A1092T7",

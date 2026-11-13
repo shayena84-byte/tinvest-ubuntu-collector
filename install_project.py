@@ -151,7 +151,7 @@ def main():
         raise SystemExit("Run as your normal Ubuntu user, without sudo")
     source = Path(__file__).resolve().parent
     verify_source(source)
-    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"], cwd=source, check=True)
+    subprocess.run([sys.executable, str(source/"run_offline_tests.py")], cwd=source, check=True)
     conf = Path.home()/".config/tinvest-readonly"
     units = Path.home()/".config/systemd/user"
     stopped = []
@@ -180,6 +180,8 @@ def main():
             result = install_tree(source, args.dest, databases=(
                 Path.home()/".local/share/tinvest-market/market.sqlite3",
                 Path.home()/".local/share/tinvest-market/trading.sqlite3"))
+            from test_data_cleanup import cleanup
+            result["test_fixture_cleanup"] = cleanup(Path.home()/".local/share/tinvest-market/trading.sqlite3",apply=True)
             conf.mkdir(parents=True, exist_ok=True, mode=0o700)
             if not (conf/"market-recorder.json").exists():
                 from market_recorder import DEFAULT_CONFIG

@@ -1,5 +1,6 @@
 """Cloud OpenAI provider tests: no Ollama dependence and no Sandbox orders in dry-run."""
 import unittest
+import tempfile
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from datetime import datetime, timezone
@@ -7,9 +8,21 @@ from decimal import Decimal
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import openai_quality_trader as trader
+import runtime_lock
 
 
 class TestOpenAIQualityTrader(unittest.TestCase):
+    def setUp(self):
+        temporary=tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root=Path(temporary.name)
+        # Each class is isolated even when someone invokes unittest directly.
+        for obj,name,relative in ((trader.ledger,"DB_PATH","ledger.sqlite3"),
+                                  (trader.guard,"BLOCK_PATH","block.json"),
+                                  (runtime_lock,"LOCK_PATH","engine.lock")):
+            isolated=patch.object(obj,name,root/relative)
+            isolated.start();self.addCleanup(isolated.stop)
+
     def test_config_preserves_existing_model_with_strict_risk_ceiling(self):
         orig={
           "enabled":True,"model":"gpt-6.1-sol","watchlist":["SBER"],

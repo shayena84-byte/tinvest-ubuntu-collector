@@ -1,10 +1,11 @@
-# T-Invest Ubuntu Collector v1.11.0
+# T-Invest Ubuntu Collector v1.11.1
 
 Инвестиционная система на Ubuntu: сбор рыночных данных, история стаканов в SQLite,
 локальная панель, модельные решения и виртуальная торговля **только T-Invest Sandbox**.
 Python 3.10+ и стандартная библиотека; внешние Python-пакеты не требуются.
 
-Последний выпуск: [v1.11.0](https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/tag/v1.11.0).
+Последний выпуск: [v1.11.1](https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/tag/v1.11.1).
+Исправление изоляции тестов и очистка фиктивных записей: [V1_11_1_FIX.md](V1_11_1_FIX.md).
 Полная инструкция обновления, настройки и ограничений — [V1_11_OPERATIONS.md](V1_11_OPERATIONS.md).
 
 ## Что входит
@@ -21,10 +22,10 @@ Python 3.10+ и стандартная библиотека; внешние Pyth
 
 ```bash
 cd ~
-curl -fL --retry 3 -o tinvest_v1.11.0.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.11.0/tinvest_ubuntu_collector.zip
-mkdir -p tinvest-v1.11.0-source
-unzip -o tinvest_v1.11.0.zip -d tinvest-v1.11.0-source
-cd tinvest-v1.11.0-source/tinvest_ubuntu_collector
+curl -fL --retry 3 -o tinvest_v1.11.1.zip https://github.com/shayena84-byte/tinvest-ubuntu-collector/releases/download/v1.11.1/tinvest_ubuntu_collector.zip
+mkdir -p tinvest-v1.11.1-source
+unzip -o tinvest_v1.11.1.zip -d tinvest-v1.11.1-source
+cd tinvest-v1.11.1-source/tinvest_ubuntu_collector
 bash install_v1_11.sh
 python3 ~/tinvest-collector/system_status.py
 ```
@@ -109,7 +110,7 @@ systemctl --user disable --now tinvest-sandbox-openai.timer tinvest-sandbox-ai.t
 ## Разработка и выпуск
 
 ```bash
-python3 -m unittest discover -s tests -q
+python3 run_offline_tests.py
 node --check dashboard.js
 python3 build_release.py --output .build/tinvest_ubuntu_collector.zip
 ```
