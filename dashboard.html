@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>T-Invest — Аналитика стаканов</title>
+<style>
+:root{--bg:#08111e;--surface:#111e2e;--surface2:#16263a;--stroke:#253b51;--text:#e8eff7;--muted:#94a9bc;--blue:#66b1fa;--teal:#46dac2;--amber:#eab76f;--red:#f47e89;--violet:#b7a1fb;--green:#7adb9c}
+*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(circle at 75% -10%,#16334b 0,transparent 32%),var(--bg);font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.page{max-width:1440px;margin:auto;padding:34px 30px 70px}
+header{display:flex;align-items:start;justify-content:space-between;gap:24px;padding-bottom:25px;border-bottom:1px solid var(--stroke)}
+.eyebrow{font-size:11px;letter-spacing:.15em;color:var(--teal);text-transform:uppercase;font-weight:700}
+h1{font-size:clamp(26px,3vw,39px);line-height:1.15;letter-spacing:-.035em;margin:9px 0 10px}
+.subtitle{color:var(--muted);max-width:720px;margin:0}.header-right{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+.pill{border:1px solid var(--stroke);padding:8px 11px;border-radius:18px;color:var(--muted);background:#0a1726;white-space:nowrap;font-size:12px}
+.pill.ok{color:var(--green);border-color:#285348}.pill.err{color:var(--red);border-color:#703c46}
+.controls{display:flex;gap:12px;align-items:center;margin:24px 0;flex-wrap:wrap}
+select,button{appearance:none;background:var(--surface);border:1px solid var(--stroke);color:var(--text);padding:10px 14px;border-radius:11px;font:inherit;outline:none}
+select{min-width:174px}select:focus-visible,button:focus-visible{outline:2px solid var(--teal)}button{cursor:pointer;background:#17374f;border-color:#295b76;font-weight:600}button:hover{background:#24506c}
+.spacer{flex:1}.update{color:var(--muted);font-size:12px}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:20px}
+.card,.panel{background:linear-gradient(155deg,#142337,#0e1b2a);border:1px solid var(--stroke);border-radius:18px;box-shadow:0 9px 36px #02091233}
+.card{padding:19px 20px}.card .label{color:var(--muted);font-size:12px}.card strong{display:block;font-size:clamp(19px,2vw,27px);font-weight:680;letter-spacing:-.02em;margin-top:8px}.card small{display:block;color:var(--muted);margin-top:4px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.panel{padding:20px;min-width:0;margin-bottom:16px}
+.panel h2{font-size:16px;letter-spacing:-.012em;margin:0 0 6px;font-weight:660}.panel .desc{color:var(--muted);font-size:12px;margin:0 0 18px}
+.chart{height:230px;border-radius:12px;background:#09172866;border:1px solid #1a3043;position:relative;overflow:hidden}
+.chart svg{width:100%;height:100%;display:block}
+.chart .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:13px;text-align:center;padding:25px}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;color:var(--muted);font-size:12px}
+.legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:6px;border-radius:2px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin:10px 0 14px}
+.section-head h2{margin:0;font-size:18px}.section-head p{margin:0;color:var(--muted);font-size:12px}
+.quality{display:flex;flex-wrap:wrap;gap:10px;padding:12px 0 3px}
+.quality .q{border:1px solid var(--stroke);padding:8px 12px;border-radius:10px;color:var(--muted)}
+.quality strong{color:var(--text);margin-left:9px}
+table{width:100%;border-collapse:collapse;text-align:left;font-size:12px;white-space:nowrap}
+th{text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;font-size:10px}
+th,td{padding:11px 12px;border-bottom:1px solid var(--stroke)}
+td.num{font-variant-numeric:tabular-nums}tbody tr:hover{background:#18304750}
+.table-wrap{overflow:auto;max-height:350px;border-radius:12px}
+.status{display:inline-flex;align-items:center;gap:6px;border:1px solid;padding:3px 8px;border-radius:9px;font-size:11px}
+.valid{color:var(--green);border-color:#295c4d;background:#133f362b}
+.stale{color:var(--amber);border-color:#6b5130;background:#684e2528}
+.unverified{color:var(--violet);border-color:#52456f;background:#362e5433}
+.invalid{color:var(--red);border-color:#7a3f48;background:#71344133}
+.note{border-left:3px solid var(--amber);padding:10px 14px;background:#3f311e55;border-radius:0 10px 10px 0;color:#e3caa2;margin:0 0 17px;font-size:12px}
+footer{color:#748ba0;font-size:12px;line-height:1.7;margin-top:20px;border-top:1px solid var(--stroke);padding-top:18px}
+.errbox{border:1px solid #71404a;background:#46202a55;color:#ffb5bd;padding:12px 16px;border-radius:10px;margin:18px 0;display:none}
+@media(max-width:1050px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.split{grid-template-columns:1fr}}
+@media(max-width:650px){.page{padding:20px 14px 44px}header{display:block}.header-right{justify-content:flex-start;margin-top:16px}.cards{grid-template-columns:1fr 1fr;gap:9px}.card{padding:14px}.card strong{font-size:20px}.controls select{flex:1;min-width:100px}.chart{height:195px}}
+</style>
+<script src="/dashboard.js" defer></script>
+</head>
+<body>
+<main class="page">
+<header>
+  <div>
+    <div class="eyebrow">T-INVEST SANDBOX / MARKET INTELLIGENCE</div>
+    <h1>Рыночный мониторинг</h1>
+    <p class="subtitle">История котировок, глубины стакана и качества данных. Локальный дашборд с пятиминутными замерами из SQLite.</p>
+  </div>
+  <div class="header-right">
+    <span class="pill ok">● Только чтение</span>
+    <span class="pill">SQLite · Ubuntu</span>
+    <span class="pill" id="conn">● Загрузка…</span>
+  </div>
+</header>
+<div id="error" class="errbox" role="alert"></div>
+<div class="controls">
+  <label for="instrument" class="eyebrow" style="color:var(--muted)">Инструмент</label>
+  <select id="instrument" aria-label="Инструмент"></select>
+  <label for="range" class="eyebrow" style="color:var(--muted)">Период</label>
+  <select id="range" aria-label="Период">
+    <option value="6">6 часов</option><option value="24" selected>24 часа</option>
+    <option value="72">3 дня</option><option value="168">7 дней</option>
+  </select>
+  <button id="refresh" type="button">↻ Обновить</button>
+  <div class="spacer"></div>
+  <span id="updated" class="update">Данные не загружены</span>
+</div>
+<section class="cards" aria-label="Основные показатели">
+  <div class="card"><span class="label">Последняя сделка</span><strong id="last-price">—</strong><small id="last-stamp">—</small></div>
+  <div class="card"><span class="label">Лучшая покупка / продажа</span><strong id="bid-ask">—</strong><small id="best-stamp">—</small></div>
+  <div class="card"><span class="label">Медианный спред</span><strong id="median-spread">—</strong><small>Только подтверждённые стаканы</small></div>
+  <div class="card"><span class="label">Пригодных замеров</span><strong id="usable">—</strong><small id="usable-sub">—</small></div>
+</section>
+<div id="quality-warning" class="note">Котировки доступны для наблюдения, но без подтверждения времени стакана не пригодны для автоматического исполнения заявок.</div>
+<div class="split">
+<section class="panel">
+  <h2>Динамика последней цены</h2>
+  <p class="desc">История наблюдений; непроверенные точки отмечаются отдельно</p>
+  <div class="chart" id="price-chart"></div>
+  <div class="legend"><span><i style="background:var(--blue)"></i>Все наблюдения</span><span><i style="background:var(--teal)"></i>Подтверждённые</span></div>
+</section>
+<section class="panel">
+  <h2>Лучшая покупка и продажа</h2>
+  <p class="desc">Цены на верхних уровнях стакана; перекрещённые снимки исключены</p>
+  <div class="chart" id="top-chart"></div>
+  <div class="legend"><span><i style="background:var(--teal)"></i>Bid</span><span><i style="background:var(--amber)"></i>Ask</span></div>
+</section>
+<section class="panel">
+  <h2>Спред, %</h2>
+  <p class="desc">В статистику попадают только актуальные и непротиворечивые стаканы</p>
+  <div class="chart" id="spread-chart"></div>
+  <div class="legend"><span><i style="background:var(--violet)"></i>Подтверждённый спред</span></div>
+</section>
+<section class="panel">
+  <h2>Ликвидность первых 10 уровней</h2>
+  <p class="desc">Суммарные лоты bid и ask; только подтверждённые снимки</p>
+  <div class="chart" id="depth-chart"></div>
+  <div class="legend"><span><i style="background:var(--teal)"></i>Спрос</span><span><i style="background:var(--red)"></i>Предложение</span></div>
+</section>
+</div>
+<div class="section-head"><h2>Стакан и моделирование исполнения</h2><p>Срез последнего сохранённого стакана, оценка по доступным уровням</p></div>
+<div class="split">
+  <section class="panel">
+    <h2>Глубина спроса и предложения · 10 уровней</h2>
+    <p class="desc" id="depth-stamp">Загрузка уровней из SQLite…</p>
+    <div class="split" style="gap:12px">
+      <div class="table-wrap"><table><thead><tr><th>Покупка Bid</th><th>Лоты</th><th>Доля</th></tr></thead><tbody id="depth-bids"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Продажа Ask</th><th>Лоты</th><th>Доля</th></tr></thead><tbody id="depth-asks"></tbody></table></div>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Расчёт цены исполнения по стакану</h2>
+    <p class="desc">Ориентировочная средневзвешенная котировка, не сумма в рублях и не прогноз исполнения</p>
+    <label for="lots" style="color:var(--muted)">Количество лотов</label>
+    <select id="lots" style="margin-left:10px"><option value="1">1</option><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option></select>
+    <div class="cards" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:18px">
+      <div class="card"><span class="label">Продажа по Bid</span><strong id="sell-est">—</strong><small id="sell-fill">—</small></div>
+      <div class="card"><span class="label">Покупка по Ask</span><strong id="buy-est">—</strong><small id="buy-fill">—</small></div>
+    </div>
+    <p id="fill-warning" class="note">Симуляция доступна только по актуальному непересечённому стакану.</p>
+  </section>
+</div>
+<section class="panel">
+  <h2>Дисбаланс спроса / предложения</h2>
+  <p class="desc">Показатель (Bid − Ask) / (Bid + Ask) для первых 10 уровней. Значение ближе к −1 означает преобладание предложений, ближе к +1 — спроса. Не является доказательством будущего движения цены.</p>
+  <div class="chart" id="imbalance-chart"></div>
+</section>
+<div class="section-head"><h2>Контроль качества</h2><p id="quality-sub">Итоги выбранного периода</p></div>
+<div class="panel">
+  <div class="quality">
+    <span class="q">Подтверждено <strong id="q-valid">0</strong></span>
+    <span class="q">Устарело <strong id="q-stale">0</strong></span>
+    <span class="q">Не подтверждено <strong id="q-unverified">0</strong></span>
+    <span class="q">Некорректно <strong id="q-invalid">0</strong></span>
+  </div>
+</div>
+<div class="split">
+  <section class="panel">
+    <h2>Последние замеры</h2>
+    <p class="desc">Последние 12 точек выбранного инструмента</p>
+    <div class="table-wrap">
+      <table><thead><tr><th>Время (МСК)</th><th>Последняя</th><th>Bid / Ask</th><th>Спред</th><th>Качество</th></tr></thead><tbody id="recent-body"></tbody></table>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Журнал аномалий</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:9px 0"><select id="anomaly-filter" aria-label="Фильтр аномалий"><option value="all">Все статусы</option><option value="invalid">Некорректные</option><option value="stale">Устаревшие</option><option value="unverified">Не подтверждены</option></select><select id="anomaly-instrument" aria-label="Фильтр инструмента"><option value="all">Все инструменты</option></select></div>
+    <p class="desc">Неисправные, устаревшие и неподтверждённые стаканы, зафиксированные в БД</p>
+    <div class="table-wrap">
+      <table><thead><tr><th>Время (МСК)</th><th>Инструмент</th><th>Причина</th><th>Статус</th></tr></thead><tbody id="anomaly-body"></tbody></table>
+    </div>
+  </section>
+</div>
+<footer>
+  <strong>Режим наблюдения, без торговли.</strong>
+  Источник — T-Invest Sandbox MarketDataService. Акции: цена в рублях; облигации: в процентах от остаточного номинала, без НКД.
+  Данные могут быть задержаны. По умолчанию страница доступна только с Ubuntu localhost через SSH-туннель.
+  Автообновление — раз в 60 секунд. Несовпадающие и устаревшие стаканы нельзя использовать для исполнения сделок.
+</footer>
+</main>
+</body>
+</html>

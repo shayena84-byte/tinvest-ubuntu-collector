@@ -1,0 +1,50 @@
+{
+  "source": "MOEX ISS public data",
+  "retrieved_utc": "2026-11-12T20:45:40.029931+00:00",
+  "quotes": [
+    {
+      "symbol": "SBER",
+      "isin": "RU0009029540",
+      "board": "TQBR",
+      "price_unit": "RUB/share",
+      "last": 298.68,
+      "best_bid": 298.67,
+      "best_ask": 298.68,
+      "previous_close": 298.73,
+      "market_price": 295.08,
+      "market_price_2": 297.93,
+      "number_of_trades": 137568,
+      "volume": null,
+      "last_trade_time": "23:30:40",
+      "update_time": "23:30:40",
+      "last_change": 0.01,
+      "moex_systime": "2026-11-12 23:45:40",
+      "source": "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/SBER.json?iss.meta=off&iss.only=securities%2Cmarketdata",
+      "note": "Market data may be delayed or absent outside a trading session. Bid/ask are not guaranteed executable."
+    },
+    {
+      "symbol": "RU000A1092T7",
+      "isin": "RU000A1092T7",
+      "board": "TQCB",
+      "price_unit": "% of remaining nominal, excluding accrued coupon",
+      "last": 45.93,
+      "best_bid": 45.5,
+      "best_ask": 45.93,
+      "previous_close": 45.99,
+      "market_price": 45.23,
+      "market_price_2": null,
+      "number_of_trades": 46,
+      "volume": null,
+      "last_trade_time": "22:52:51",
+      "update_time": "23:12:26",
+      "last_change": -0.02,
+      "moex_systime": "2026-11-12 23:27:27",
+      "source": "https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQCB/securities/RU000A1092T7.json?iss.meta=off&iss.only=securities%2Cmarketdata",
+      "note": "Market data may be delayed or absent outside a trading session. Bid/ask are not guaranteed executable.",
+      "nominal": 1000,
+      "accrued_coupon": 0.99,
+      "currency": "SUR"
+    }
+  ],
+  "errors": []
+}
