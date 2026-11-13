@@ -1,4 +1,4 @@
-name: Test and publish v1.9.0 archive
+name: Test and publish v1.10.0 archive
 on:
   push:
     branches: [main]
@@ -44,12 +44,26 @@ jobs:
           cp -r tests /tmp/tinvest_ubuntu_collector/
           cd /tmp
           zip -q -r "$GITHUB_WORKSPACE/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
-      - name: Publish release v1.9.0
+      - name: Publish release v1.10.0
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1.9.0 >/dev/null 2>&1; then
-            gh release upload v1.9.0 tinvest_ubuntu_collector.zip --clobber
+          if gh release view v1.10.0 >/dev/null 2>&1; then
+            gh release upload v1.10.0 tinvest_ubuntu_collector.zip --clobber
           else
-            gh release create v1.9.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.9.0" --notes-file V1_10_OFFLINE_AUDIT.md
+            gh release create v1.10.0 tinvest_ubuntu_collector.zip --title "T-Invest Ubuntu Collector v1.10.0" --notes-file V1_10_OFFLINE_AUDIT.md
           fi
+
+      - name: Restore v1.9.0 archive from immutable tagged source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --depth 1 --branch v1.9.0 https://github.com/${{ github.repository }}.git /tmp/tinvest-v19-source
+          mkdir -p /tmp/tinvest-v19-package/tinvest_ubuntu_collector
+          cd /tmp/tinvest-v19-source
+          cp collector.py sandbox.py sandbox_autotrader.py ai_sandbox_agent.py ollama_sandbox_agent.py openai_quality_trader.py trading_session.py v19_guard.py v19_health.py market_recorder.py market_dashboard.py dashboard.html dashboard.js install.sh install_autotrader.sh install_ai_agent.sh install_market_recorder.sh install_market_quality.sh install_v1_6.sh install_openai_backend.sh upgrade_dynamic_session.sh upgrade_v1_9.sh README.md MARKET_RECORDER.md MARKET_QUALITY_DASHBOARD.md V1_6_AUTONOMOUS_SANDBOX.md V1_7_OPENAI_SANDBOX.md V1_8_DYNAMIC_TRADING_STATUS.md V1_9_SAFETY.md /tmp/tinvest-v19-package/tinvest_ubuntu_collector/
+          cp -r tests /tmp/tinvest-v19-package/tinvest_ubuntu_collector/
+          cd /tmp/tinvest-v19-package
+          zip -q -r "/tmp/tinvest-v19-package/tinvest_ubuntu_collector.zip" tinvest_ubuntu_collector
+          cd "$GITHUB_WORKSPACE"
+          gh release upload v1.9.0 /tmp/tinvest-v19-package/tinvest_ubuntu_collector.zip --clobber
