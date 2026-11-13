@@ -365,7 +365,7 @@ document.addEventListener("DOMContentLoaded",()=>{
 });
 
 const SYSTEM_LABELS={recorder:"Сборщик",supervisor:"Контроль позиций",trader:"Модельный агент",market_status:"Торги"};
-const RESULT_LABELS={started:"Начат",hold:"Наблюдение",rejected:"Отклонено проверкой",dry_run:"Проверка без сделки",submitted:"Заявка отправлена",budget_blocked:"Лимит API",provider_error:"Ошибка модели",market_changed:"Статус торгов изменился",decided:"Решение принято",risk_pause:"Пауза риска",provider_blocked:"API заблокирован",pending_order:"Сверка заявки",budget_pause:"Пауза бюджета",ok:"Норма",collection_error:"Ошибка сбора",risk_alert:"Порог риска",open:"Есть доступные инструменты",closed_or_unverified:"Закрыто или не подтверждено"};
+const RESULT_LABELS={filled:"Исполнено",partial_fill:"Частично исполнено",cancelled:"Отменено",order_rejected:"Отклонено брокером",open_order:"Активная заявка",outcome_unknown:"Исход требует сверки",started:"Начат",hold:"Наблюдение",rejected:"Отклонено проверкой",dry_run:"Проверка без сделки",submitted:"Заявка отправлена",budget_blocked:"Лимит API",provider_error:"Ошибка модели",market_changed:"Статус торгов изменился",decided:"Решение принято",risk_pause:"Пауза риска",provider_blocked:"API заблокирован",pending_order:"Сверка заявки",budget_pause:"Пауза бюджета",ok:"Норма",collection_error:"Ошибка сбора",risk_alert:"Порог риска",open:"Есть доступные инструменты",closed_or_unverified:"Закрыто или не подтверждено"};
 async function loadSystem(){
   try {
     const response=await fetch("/api/system",{cache:"no-store"});

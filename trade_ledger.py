@@ -143,7 +143,7 @@ def order_state(client_id, response, now=None):
     # Import the numeric decoder lazily; the ledger itself has no broker client.
     from collector import val_quote
     with connection() as db:
-        existing = db.execute("SELECT client_id FROM orders WHERE client_id=?", (client_id,)).fetchone()
+        existing = db.execute("SELECT client_id,cycle_id FROM orders WHERE client_id=?", (client_id,)).fetchone()
         if not existing:
             event_data = {"client_id": client_id, "status": response.get("executionReportStatus")}
             db.execute("INSERT INTO events(utc,kind,details_json) VALUES(?,?,?)",
@@ -156,6 +156,13 @@ def order_state(client_id, response, now=None):
                    (response.get("orderId"), stamp(now), response.get("executionReportStatus", "unknown"),
                     int(response.get("lotsExecuted", 0)), val_quote(response.get("executedOrderPrice")) or None,
                     fee, client_id))
+        if existing["cycle_id"]:
+            status = {"EXECUTION_REPORT_STATUS_FILL":"filled",
+                      "EXECUTION_REPORT_STATUS_PARTIALLYFILL":"partial_fill",
+                      "EXECUTION_REPORT_STATUS_CANCELLED":"cancelled",
+                      "EXECUTION_REPORT_STATUS_REJECTED":"order_rejected",
+                      "EXECUTION_REPORT_STATUS_NEW":"open_order"}.get(response.get("executionReportStatus"),"submitted")
+            db.execute("UPDATE cycles SET status=? WHERE id=?",(status,existing["cycle_id"]))
         for stage in response.get("stages", []):
             if stage.get("tradeId"):
                 db.execute("INSERT OR IGNORE INTO fills VALUES(?,?,?,?,?)", (client_id,

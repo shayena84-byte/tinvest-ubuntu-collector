@@ -187,7 +187,6 @@ def one_cycle(dry_run=False, provider="openai"):
     t.post_order(api, account_id, {"ticker": trade["symbol"], "uid": inst["uid"], "lot": inst["lot"]},
                  trade["action"], trade["lots"], Decimal(inst["price_rub"]),
                  "openai: " + decision["reason"][:90], st, datetime.now(timezone.utc))
-    ledger.finish_cycle(cycle_id, "submitted")
     ledger.heartbeat("trader", "submitted", {"symbol": trade["symbol"]})
     ai.log("execution", provider=provider, action=trade["action"], symbol=trade["symbol"],
            lots=trade["lots"], result="submitted_to_TInvest_Sandbox", cycle_id=cycle_id)

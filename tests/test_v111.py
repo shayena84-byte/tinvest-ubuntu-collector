@@ -211,6 +211,7 @@ class ExecutionTests(Isolated):
         self.assertEqual(state["pending"]["client_id"],body["orderId"])
         self.assertEqual(state["pending"]["broker_id"],"EXCHANGE_ID")
         self.assertFalse(t.reconcile_pending(api,"PRIVATE_ACCOUNT",state,self.now))
+        self.assertEqual(ledger.summary()["cycles"][0]["status"],"filled")
         with ledger.connection(readonly=True) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM fills").fetchone()[0],1)
             self.assertEqual(db.execute("SELECT commission_rub FROM orders").fetchone()[0],"4.5")

@@ -383,7 +383,6 @@ def post_order(api, account_id, spec, side, lots, price, reason, st, now):
         st["pending"]["broker_id"] = response.get("orderId")
         atomic_save(STATE_FILE, st)
         ledger.order_state(oid, response)
-        ledger.finish_cycle(cycle_id, "submitted")
         log_event("sandbox_order_submitted", ticker=spec["ticker"], side=side, lots=lots,
                   reference_price=str(limit), reason=reason,
                   status=response.get("executionReportStatus", "unknown"))
