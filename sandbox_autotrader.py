@@ -245,7 +245,8 @@ def held_lots(portfolio, uid, lot):
 def initialize_day(st, now, equity):
     day=now.astimezone(TZ).date().isoformat()
     if st.get("day")!=day:
-        st.update({"day":day,"start_equity":str(equity),"orders_today":0,"last_order_utc":None})
+        st.update({"day":day,"start_equity":str(equity),"orders_today":0})
+    st.setdefault("last_order_utc",None)
     st.setdefault("entries",{})
     st.setdefault("peaks",{})
     return st
@@ -332,7 +333,7 @@ def post_order(api, account_id, spec, side, lots, price, reason, st, now):
     raw_port = api.call("portfolio", {"accountId": account_id, "currency": "RUB"})
     raw_pos = api.call("positions", {"accountId": account_id})
     equity, cash = d(raw_port.get("totalAmountPortfolio")), rub_cash(raw_pos)
-    if equity <= 0 or cash < 0:
+    if not equity.is_finite() or not cash.is_finite() or equity <= 0 or cash < 0:
         raise c.APIError("Unverified portfolio")
     initialize_day(st, checked_at, equity)
     inst = {"symbol": spec["ticker"], "uid": spec["uid"], "lot": spec["lot"],

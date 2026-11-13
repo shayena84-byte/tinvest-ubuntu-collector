@@ -12,6 +12,10 @@ const COLORS = {
 };
 const REASONS = {
   ok:"Подтверждено",
+  old_snapshot:"Давно не было новых снимков",
+  old_orderbook:"Биржевой стакан устарел",
+  timestamp_unverified:"Время стакана не подтверждено",
+  timestamp_in_future:"Время источника из будущего",
   crossed_or_locked_book:"Пересечение Bid ≥ Ask",
   orderbook_older_than_15m:"Стакан старше 15 минут",
   orderbook_timestamp_missing:"Нет времени стакана",
@@ -188,12 +192,12 @@ function render(){
   $("usable-sub").textContent=total?num(100*valid/total,1)+"% пригодных":"Нет наблюдений";
   const lastQuality=latest?.quality_status||"unverified";
   const warning=$("quality-warning");
-  if(lastQuality==="valid"){
+  if(lastQuality==="valid" && summary?.fresh_now!==false){
     warning.textContent="Последний стакан подтверждён по времени и непротиворечив. Это не гарантирует фактического исполнения по показанной цене.";
     warning.style.borderLeftColor="var(--teal)";
   }else{
     warning.textContent="Последний стакан не пригоден для торгового исполнения: "+
-      (REASONS[latest?.quality_reason]||latest?.quality_reason||"Нет данных")+
+      (REASONS[summary?.fresh_now===false?summary.freshness_reason:latest?.quality_reason]||latest?.quality_reason||"Нет данных")+
       ". Сырые наблюдения остаются в архиве, но исключены из подтверждённой статистики.";
     warning.style.borderLeftColor="var(--amber)";
   }

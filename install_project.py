@@ -159,7 +159,14 @@ def main():
         # Abort rather than assume trading is stopped when user systemd is unavailable.
         systemctl("show-environment", check=True)
         for name in TRADING:
-            systemctl("disable", "--now", name+".timer")
+            loaded = systemctl("show", name+".timer", "--property=LoadState", "--value")
+            if loaded.returncode:
+                raise RuntimeError("Cannot inspect trading timer: "+name)
+            if loaded.stdout.strip() == "not-found":
+                continue
+            systemctl("disable", "--now", name+".timer", check=True)
+            if systemctl("is-active", "--quiet", name+".timer").returncode == 0 or systemctl("is-enabled", "--quiet", name+".timer").returncode == 0:
+                raise RuntimeError("Trading timer remains enabled: "+name)
         for name in ("tinvest-sandbox-supervisor.timer", "tinvest-sandbox-market.timer", "tinvest-sandbox-dashboard.service"):
             if systemctl("is-active", "--quiet", name).returncode == 0:
                 systemctl("stop", name, check=True)

@@ -24,7 +24,7 @@ def files(source):
     manifest = json.loads((source/"package_manifest.json").read_text("utf-8"))
     names = manifest["runtime"]+manifest["support"]
     names += [str(p.relative_to(source)) for p in (source/"tests").rglob("*")
-              if p.is_file() and "__pycache__" not in p.parts and p.suffix in (".py", ".json")]
+              if p.is_file() and "__pycache__" not in p.parts and p.suffix in (".py", ".json", ".js")]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate package member")
     for name in names:

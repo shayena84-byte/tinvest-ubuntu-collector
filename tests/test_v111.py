@@ -4,6 +4,9 @@ from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
+from io import BytesIO
+from types import SimpleNamespace
+import market_dashboard
 import json
 from pathlib import Path
 import shutil
@@ -67,6 +70,7 @@ class Isolated(unittest.TestCase):
                         "asks":[{"price":quote(ask),"quantity":volume}]}
                 value = recorder.normalize_payload(inst,{},book,10,when)
                 recorder.store_snapshot(db,inst,value,when)
+        db.close()
         return path
 
 
@@ -152,6 +156,7 @@ class BudgetTests(Isolated):
         cfg = self.cfg()
         day = self.now.astimezone(budget.TZ).date().isoformat()
         budget.LEGACY_STATE_PATH.write_text(json.dumps({"ai_day":day,"ai_calls_today":24}))
+        self.assertEqual(budget.status()["remaining_calls"],0)
         with self.assertRaisesRegex(budget.BudgetBlocked,"daily_call"):
             budget.reserve("gpt-test","run",100,now=self.now,cfg=cfg)
         self.assertEqual(budget.status()["calls"],24)
@@ -229,6 +234,13 @@ class ExecutionTests(Isolated):
         self.assertEqual(request["orderIdType"],"ORDER_ID_TYPE_REQUEST")
         self.assertEqual(sum(method == "trader_post" for method,_,_ in api.calls),1)
 
+    def test_cooldown_is_preserved_across_moscow_midnight(self):
+        now=datetime(2026,11,13,21,1,tzinfo=timezone.utc)
+        previous=(now-timedelta(minutes=2)).isoformat()
+        state=t.initialize_day({"day":"2026-11-13","last_order_utc":previous},now,Decimal(100000))
+        self.assertEqual(state["last_order_utc"],previous)
+        self.assertTrue(t.order_recent(state,now,20))
+
     def test_cloud_block_does_not_prevent_pending_reconciliation(self):
         guard.block_quota()
         with patch.object(trader,"config",return_value={"watchlist":["SBER"]}), \
@@ -287,6 +299,56 @@ class InstallAndReplayTests(Isolated):
             with self.assertRaises(RuntimeError):install_project.install_tree(SOURCE,destination)
         self.assertEqual((destination/"original.txt").read_text(),"original")
         self.assertFalse((destination/"openai_quality_trader.py").exists())
+
+    def test_service_configuration_preserves_proxy_and_overrides(self):
+        conf, units = self.root/"config", self.root/"units"
+        conf.mkdir();units.mkdir()
+        proxy = conf/"proxychains.conf"
+        proxy.write_text("strict_chain\n[ProxyList]\nsocks5 192.168.202.50 1080\n")
+        original = proxy.read_bytes()
+        existing = units/"tinvest-sandbox-openai.service"
+        existing.write_text("preserved existing unit")
+        override = units/"tinvest-sandbox-openai.service.d/override.conf"
+        override.parent.mkdir();override.write_text("preserved custom override")
+        with patch.object(install_project.shutil,"which",return_value="/usr/bin/proxychains4"):
+            install_project.configure_services(self.root/"installed",conf,units)
+        self.assertEqual(proxy.read_bytes(),original)
+        self.assertEqual(existing.read_text(),"preserved existing unit")
+        self.assertEqual(override.read_text(),"preserved custom override")
+        self.assertIn("proxychains4",(units/"tinvest-sandbox-supervisor.service").read_text())
+        self.assertFalse((units/"timers.target.wants").exists())
+
+    def test_consistent_sqlite_backup_precedes_install(self):
+        market = self.market()
+        before = hashlib.sha256(market.read_bytes()).hexdigest()
+        result = install_project.install_tree(SOURCE,self.root/"installed",databases=(market,))
+        backup = Path(result["backup"])/("0-"+market.name)
+        with sqlite3.connect(backup) as db:
+            self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0],"ok")
+            self.assertEqual(db.execute("SELECT count(*) FROM snapshots").fetchone()[0],1)
+        self.assertEqual(hashlib.sha256(market.read_bytes()).hexdigest(),before)
+
+    def test_http_status_endpoints_are_read_only_and_refuse_post(self):
+        market = self.market()
+        ledger.heartbeat("recorder","ok",now=self.now)
+        class Wire:
+            def __init__(self,request):self.reader=BytesIO(request);self.output=bytearray()
+            def makefile(self,*args):return self.reader
+            def sendall(self,data):self.output.extend(data)
+        def request(method,url):
+            wire=Wire((method+" "+url+" HTTP/1.0\r\nHost: localhost\r\n\r\n").encode())
+            with patch.object(system_status,"CONFIG_DIR",self.root/"config"), \
+                 patch.object(market_dashboard.LocalHandler,"log_message"):
+                market_dashboard.LocalHandler(wire,("127.0.0.1",1),SimpleNamespace(database_path=market))
+            return bytes(wire.output)
+        before=hashlib.sha256(ledger.DB_PATH.read_bytes()).hexdigest()
+        for url in ("/api/system","/api/trading","/api/market?hours=24","/api/book?symbol=SBER&board=TQBR"):
+            response=request("GET",url)
+            self.assertIn(b"200 OK",response.split(b"\r\n",1)[0])
+            json.loads(response.split(b"\r\n\r\n",1)[1])
+            self.assertIn(b"Content-Security-Policy:",response)
+        self.assertIn(b"405 Method Not Allowed",request("POST","/api/trading"))
+        self.assertEqual(hashlib.sha256(ledger.DB_PATH.read_bytes()).hexdigest(),before)
 
     def test_manual_concurrent_engine_is_rejected(self):
         with runtime_lock.engine_lock():

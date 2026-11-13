@@ -89,10 +89,12 @@ def dashboard_data(db_path=DEFAULT_DB,hours=24,now=None):
                 change=None
         else:
             change=None
+        fresh, fresh_reason = market_quality.freshness(latest["collected_utc"], latest["book_time_utc"], now) if latest else (False,"no_snapshot")
         summaries.append({
             "symbol":group["symbol"],"board":group["board"],"name":group["name"],
             "isin":group["isin"],"measurements":len(data),"statuses":statuses,
             "last":latest,"last_confirmed":good[-1] if good else None,
+            "fresh_now":fresh,"freshness_reason":fresh_reason,
             "median_valid_spread_pct":round(statistics.median(spreads),4) if spreads else None,
             "validated_price_change_pct":change,
         })

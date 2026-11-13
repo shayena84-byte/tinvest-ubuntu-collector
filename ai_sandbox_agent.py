@@ -259,7 +259,7 @@ def build_context(api,account_id,ai_cfg,now):
     positions=api.call("positions",{"accountId":account_id})
     equity=t.d(portfolio.get("totalAmountPortfolio"))
     cash=t.rub_cash(positions)
-    if equity<=0 or cash<0:
+    if not equity.is_finite() or not cash.is_finite() or equity<=0 or cash<0:
         raise c.APIError("Не удалось прочитать достоверную стоимость портфеля и деньги")
     tradable=[]
     positions_by_uid={p.get("instrumentUid"):p for p in portfolio.get("positions",[])}

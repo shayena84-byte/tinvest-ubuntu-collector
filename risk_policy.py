@@ -75,6 +75,8 @@ def validate(decision, context, config, state, now):
             return None, "Cooldown active"
     equity = Decimal(context["equity_rub"])
     cash = Decimal(context["cash_rub"])
+    if not equity.is_finite() or not cash.is_finite() or equity <= 0 or cash < 0:
+        return None, "Unverified equity or cash"
     invested = Decimal(context.get("invested_rub_estimate", str(max(Decimal(0), equity-cash))))
     # Use the less favourable of last price and displayed ask for buy affordability.
     price = Decimal(inst["price_rub"])

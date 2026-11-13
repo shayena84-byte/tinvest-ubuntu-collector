@@ -125,8 +125,19 @@ def status(path=None, now=None):
     if path.is_file():
         with ledger.connection(path, readonly=True) as db:
             rows = [dict(r) for r in db.execute("SELECT * FROM model_calls WHERE day=?", (day,))]
+    legacy_calls = 0
+    if not rows and LEGACY_STATE_PATH.is_file():
+        state = json.loads(LEGACY_STATE_PATH.read_text("utf-8"))
+        if not isinstance(state,dict):
+            raise ValueError("Legacy usage unverified")
+        if state.get("ai_day") == day:
+            value = state.get("ai_calls_today", 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("Legacy usage unverified")
+            legacy_calls = min(value, MAX_API_CALLS_DAY)
+    count = len(rows)+legacy_calls
     known = [r for r in rows if r["actual_cost_usd"] is not None]
-    return {"day_moscow": day, "calls": len(rows), "remaining_calls": max(0, cfg["max_calls_per_day"]-len(rows)),
+    return {"day_moscow": day, "calls": count, "remaining_calls": max(0, cfg["max_calls_per_day"]-count),
             "max_calls": cfg["max_calls_per_day"], "min_interval_minutes": cfg["min_interval_minutes"],
             "input_tokens": sum(r["input_tokens"] or 0 for r in rows),
             "output_tokens": sum(r["output_tokens"] or 0 for r in rows),

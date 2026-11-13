@@ -148,7 +148,7 @@ def replay(db_path=DB, ledger_path=LEDGER, hours=168, strategy="recorded", initi
     for when, kind, row in events:
         day = when.astimezone(ZoneInfo("Europe/Moscow")).date().isoformat()
         if state.get("day") != day:
-            state.update(day=day, start_equity=str(equity()), orders_today=0, last_order_utc=None)
+            state.update(day=day, start_equity=str(equity()), orders_today=0)
         if pending and when >= pending["expires"]:
             rejected["unfilled_expired"] += pending["remaining"]
             pending = None
