@@ -1,7 +1,6 @@
 """Cloud OpenAI provider tests: no Ollama dependence and no Sandbox orders in dry-run."""
 import unittest
 import tempfile
-import runtime_lock
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from datetime import datetime, timezone
@@ -9,6 +8,7 @@ from decimal import Decimal
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import openai_quality_trader as trader
+import runtime_lock
 
 
 class TestOpenAIQualityTrader(unittest.TestCase):

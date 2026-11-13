@@ -14,6 +14,9 @@ import market_recorder as m
 class TestLocalSandboxAgent(unittest.TestCase):
     def setUp(self):
         self.temp=TemporaryDirectory()
+        for obj,name,relative in ((a.ai,"STATE_DIR","state"),(a.ai,"LOG_FILE","ai.jsonl")):
+            isolated=patch.object(obj,name,Path(self.temp.name)/relative)
+            isolated.start();self.addCleanup(isolated.stop)
         self.db=Path(self.temp.name)/"market.sqlite3"
         self.now=datetime(2026,11,12,11,55,45,tzinfo=timezone.utc)
         self.inst={"uid":"uid-sber","ticker":"SBER","isin":"RU0009029540",
