@@ -1,0 +1,44 @@
+{
+  "schema_version": "1",
+  "as_of": "2026-11-16",
+  "issuers": [
+    {
+      "name": "ДЕМО: полностью вымышленный эмитент (НЕ АПРИ и НЕ Самолёт)",
+      "inn": "0000000000",
+      "financials_as_of": "2026-09-30",
+      "financials_source_url": "https://example.org/fictional-report",
+      "financials": {
+        "cash_unrestricted_rub": 100000000,
+        "cash_restricted_escrow_rub": 9000000000,
+        "committed_undrawn_lines_rub": 200000000,
+        "net_corporate_debt_rub": 800000000,
+        "project_finance_debt_rub": 10000000000,
+        "ebitda_ltm_rub": 200000000,
+        "interest_expense_ltm_rub": 150000000,
+        "principal_due_12m_rub": 1000000000,
+        "cfo_ltm_rub": -50000000
+      },
+      "rating": {"agency": "Демо", "grade": "BBB-", "outlook": "negative"},
+      "events": [],
+      "bonds": [
+        {
+          "isin": "RU000D3M0AB3",
+          "ticker": "DEMO",
+          "board": "TQCB",
+          "outstanding_principal_rub": 1000,
+          "dirty_price_rub": 950,
+          "quote_as_of": "2026-11-13",
+          "quote_quality": "valid",
+          "quote_source_url": "https://example.org/fictional-quote",
+          "schedule_verified": true,
+          "cashflows_source_url": "https://example.org/fictional-schedule",
+          "cash_flows": [
+            {"date": "2027-05-16", "principal_rub": 0, "coupon_rub": 50},
+            {"date": "2027-11-16", "principal_rub": 1000, "coupon_rub": 50}
+          ],
+          "put_offer": null
+        }
+      ]
+    }
+  ]
+}
