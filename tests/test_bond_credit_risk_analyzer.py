@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bond_credit_risk_analyzer import analyze, analyze_bond, analyze_issuer, _xirr, to_markdown
+from bond_credit_risk_analyzer import analyze, analyze_bond, analyze_issuer, _xirr, to_markdown, DOMAIN_WEIGHTS
 
 DAY = date(2026, 11, 16)
 
@@ -23,8 +23,10 @@ def full_issuer():
                        'ebitda_ltm_rub': 200_000_000,
                        'interest_expense_ltm_rub': 150_000_000,
                        'principal_due_12m_rub': 1_000_000_000,
-                       'cfo_ltm_rub': -50_000_000},
-        'rating': {'grade': 'BBB-', 'outlook': 'negative'}, 'events': [], 'bonds': []
+                       'cfo_ltm_rub': -50_000_000, 'cfo_includes_cash_interest': True},
+        'rating': {'grade': 'BBB-', 'outlook': 'negative', 'date': '2026-11-10', 'verified': True, 'source_url': 'https://example.org/rating'},
+        'risk_reviews': {k: {'date': '2026-11-15', 'verified': True, 'complete': True, 'source_url': 'https://example.org/review'} for k in ('governance', 'tax_legal', 'payment')},
+        'events': [], 'bonds': []
     }
 
 
@@ -173,6 +175,144 @@ class AnalyzerTests(unittest.TestCase):
         b['quote_as_of'] = '2026-12-01'
         with self.assertRaises(ValueError):
             analyze_bond(b, DAY)
+
+
+class EarlyWarningTests(unittest.TestCase):
+    def event(self, kind, **extra):
+        return {'date': '2026-11-01', 'type': kind, 'verified': True,
+                'source_url': 'https://example.org/disclosure', **extra}
+
+    def test_seven_weighted_domains(self):
+        x = analyze_issuer(full_issuer(), DAY)
+        self.assertEqual(sum(DOMAIN_WEIGHTS.values()), 100)
+        self.assertEqual(x['score_coverage_weight_pct'], 100)
+        self.assertEqual(x['score_status'], 'complete')
+        self.assertEqual(sum(v['points'] for v in x['domain_scores'].values()), x['risk_score_heuristic_0_100'])
+        self.assertTrue(all(v['points'] <= v['weight'] for v in x['domain_scores'].values()))
+
+    def test_critical_event_with_missing_financials(self):
+        for kind in ('coupon_delay', 'principal_delay', 'unresolved_default', 'material_account_freeze',
+                     'bankruptcy_filing', 'funding_gap_uncovered', 'material_audit_concern'):
+            with self.subTest(kind=kind):
+                x = analyze_issuer({'name': 'Synthetic', 'events': [self.event(kind)]}, DAY)
+                self.assertEqual(x['risk_band'], 'critical')
+                self.assertEqual(x['review_priority'], 'critical_review')
+                self.assertIsNone(x['risk_score_heuristic_0_100'])
+                self.assertEqual(x['critical_alerts'][0]['code'], kind)
+
+    def test_stale_financials_do_not_hide_deferral(self):
+        a = full_issuer()
+        a['financials_as_of'] = '2025-01-01'
+        a['events'] = [self.event('principal_delay')]
+        x = analyze_issuer(a, DAY)
+        self.assertEqual(x['risk_band'], 'critical')
+        self.assertIn('stale_financials', x['missing_or_stale'])
+
+    def test_old_unresolved_never_ages_out(self):
+        a = full_issuer()
+        a['events'] = [self.event('unresolved_default', date='2024-10-01')]
+        self.assertEqual(analyze_issuer(a, DAY)['risk_band'], 'critical')
+
+    def test_verified_cure_removes_override_not_history(self):
+        a = full_issuer()
+        a['events'] = [self.event('coupon_delay', status='resolved',
+                     resolved_date='2026-11-12', resolution_verified=True,
+                     resolution_source_url='https://example.org/paid')]
+        x = analyze_issuer(a, DAY)
+        self.assertEqual(x['critical_alerts'], [])
+        self.assertGreater(x['domain_scores']['payment']['points'], 0)
+
+    def test_unsupported_cure_remains_alert(self):
+        a = full_issuer()
+        a['events'] = [self.event('principal_delay', status='resolved')]
+        self.assertEqual(analyze_issuer(a, DAY)['critical_alerts'][0]['status'], 'unknown')
+
+    def test_future_resolution_rejected(self):
+        a = full_issuer()
+        a['events'] = [self.event('coupon_delay', status='resolved',
+                     resolved_date='2026-11-18', resolution_verified=True,
+                     resolution_source_url='https://example.org/paid')]
+        with self.assertRaises(ValueError):
+            analyze_issuer(a, DAY)
+
+    def test_absent_reviews_never_imply_low_risk(self):
+        a = full_issuer()
+        a['financials'].update(cash_unrestricted_rub=2_000_000_000, net_corporate_debt_rub=0,
+                              cfo_ltm_rub=100_000_000, interest_expense_ltm_rub=0)
+        a.pop('risk_reviews')
+        a.pop('rating')
+        x = analyze_issuer(a, DAY)
+        self.assertEqual(x['risk_band'], 'insufficient_data')
+        self.assertEqual(x['score_coverage_weight_pct'], 65)
+        self.assertEqual(x['review_priority'], 'enhanced_review')
+
+    def test_governance_and_tax_flags_without_duplicate_inflation(self):
+        a = full_issuer()
+        a['events'] = [self.event('opaque_related_party_transaction')]*3 + [self.event('material_tax_claim')]
+        x = analyze_issuer(a, DAY)
+        self.assertEqual(x['domain_scores']['governance']['points'], 10)
+        self.assertEqual(x['domain_scores']['tax_legal']['points'], 8)
+
+    def test_rating_national_scale_and_small_weight(self):
+        for grade in ('ruB', 'B.ru', 'B(RU)', 'B[ru]', 'B-|ru|'):
+            a = full_issuer()
+            a['rating']['grade'] = grade
+            x = analyze_issuer(a, DAY)
+            self.assertEqual(x['domain_scores']['rating']['points'], 4, grade)
+        a['rating']['grade'] = 'C[ru]'
+        self.assertEqual(analyze_issuer(a, DAY)['domain_scores']['rating']['points'], 5)
+
+    def test_negative_ebitda_and_no_interest(self):
+        a = full_issuer()
+        a['financials'].update(ebitda_ltm_rub=-100, interest_expense_ltm_rub=0)
+        x = analyze_issuer(a, DAY)
+        self.assertEqual(x['domain_scores']['debt']['points'], 20)
+        self.assertIsNone(x['net_corporate_debt_to_ebitda'])
+
+    def test_interest_not_double_counted(self):
+        a = full_issuer()
+        f = a['financials']
+        f['cash_interest_due_12m_rub'] = 100_000_000
+        self.assertEqual(analyze_issuer(a, DAY)['cashflow_scenarios']['baseline_liquidity_surplus_12m_rub'], -750_000_000)
+        f['cfo_includes_cash_interest'] = False
+        self.assertEqual(analyze_issuer(a, DAY)['cashflow_scenarios']['baseline_liquidity_surplus_12m_rub'], -850_000_000)
+        del f['cfo_includes_cash_interest']
+        x = analyze_issuer(a, DAY)
+        self.assertEqual(x['cashflow_scenario_status'], 'conditional_interest_assumption')
+        self.assertFalse(x['domain_scores']['liquidity']['covered'])
+
+    def test_model_gap_not_confirmed_default(self):
+        x = analyze_issuer(full_issuer(), DAY)
+        self.assertIn('modeled_12m_funding_gap', x['early_warning_observations'])
+        self.assertFalse(x['critical_alerts'])
+
+    def test_affected_bond_yield_block_other_preserved(self):
+        a = full_issuer()
+        a['bonds'] = [bond(), {**bond(), 'isin': 'RU000A106631'}]
+        a['events'] = [self.event('coupon_delay', isin='RU000A1092T7')]
+        x = analyze({'schema_version': '2', 'as_of': DAY.isoformat(), 'issuers': [a]})['issuers'][0]
+        self.assertEqual(x['bonds'][0]['yield_status'], 'blocked_active_or_unresolved_credit_event')
+        self.assertIsNone(x['bonds'][0]['yield_to_maturity_pct'])
+        self.assertEqual(x['bonds'][1]['yield_status'], 'calculated')
+
+    def test_unknown_scope_restructuring_blocks_all_contractual_yields(self):
+        a = full_issuer()
+        a['bonds'] = [bond()]
+        a['events'] = [self.event('restructuring_proposal')]
+        self.assertIsNone(analyze({'schema_version': '1', 'as_of': DAY.isoformat(), 'issuers': [a]})['issuers'][0]['bonds'][0]['yield_to_maturity_pct'])
+
+    def test_missing_cashflow_with_put_does_not_crash(self):
+        b = bond()
+        del b['cash_flows']
+        b['put_offer'] = {'holder_put_right': True, 'date': '2027-01-01', 'redemption_pct': 100}
+        self.assertIsNone(analyze_bond(b, DAY)['yield_to_put_pct'])
+
+    def test_old_rating_is_unknown_not_safe(self):
+        a = full_issuer()
+        a['rating']['date'] = '2025-01-01'
+        x = analyze_issuer(a, DAY)
+        self.assertFalse(x['domain_scores']['rating']['covered'])
+        self.assertIn('rating_unverified_or_unavailable', x['missing_or_stale'])
 
 
 if __name__ == '__main__':
