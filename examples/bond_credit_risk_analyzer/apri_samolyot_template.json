@@ -1,0 +1,114 @@
+{
+  "schema_version": "2",
+  "as_of": "2026-11-16",
+  "issuers": [
+    {
+      "name": "ПАО АПРИ",
+      "inn": null,
+      "financials_as_of": null,
+      "financials_source_url": null,
+      "financials": {
+        "cash_unrestricted_rub": null,
+        "cash_restricted_escrow_rub": null,
+        "committed_undrawn_lines_rub": null,
+        "net_corporate_debt_rub": null,
+        "project_finance_debt_rub": null,
+        "ebitda_ltm_rub": null,
+        "interest_expense_ltm_rub": null,
+        "principal_due_12m_rub": null,
+        "cfo_ltm_rub": null,
+        "cfo_includes_cash_interest": null,
+        "cash_interest_due_12m_rub": null
+      },
+      "rating": null,
+      "events": [],
+      "bonds": [],
+      "risk_reviews": {
+        "governance": null,
+        "tax_legal": null,
+        "payment": null
+      }
+    },
+    {
+      "name": "ГК Самолёт",
+      "inn": null,
+      "financials_as_of": null,
+      "financials_source_url": null,
+      "financials": {
+        "cash_unrestricted_rub": null,
+        "cash_restricted_escrow_rub": null,
+        "committed_undrawn_lines_rub": null,
+        "net_corporate_debt_rub": null,
+        "project_finance_debt_rub": null,
+        "ebitda_ltm_rub": null,
+        "interest_expense_ltm_rub": null,
+        "principal_due_12m_rub": null,
+        "cfo_ltm_rub": null,
+        "cfo_includes_cash_interest": null,
+        "cash_interest_due_12m_rub": null
+      },
+      "rating": null,
+      "events": [],
+      "bonds": [],
+      "risk_reviews": {
+        "governance": null,
+        "tax_legal": null,
+        "payment": null
+      }
+    },
+    {
+      "name": "ПАО МГКЛ",
+      "inn": null,
+      "financials_as_of": null,
+      "financials_source_url": null,
+      "financials": {
+        "cash_unrestricted_rub": null,
+        "cash_restricted_escrow_rub": null,
+        "committed_undrawn_lines_rub": null,
+        "net_corporate_debt_rub": null,
+        "project_finance_debt_rub": null,
+        "ebitda_ltm_rub": null,
+        "interest_expense_ltm_rub": null,
+        "principal_due_12m_rub": null,
+        "cfo_ltm_rub": null,
+        "cfo_includes_cash_interest": null,
+        "cash_interest_due_12m_rub": null
+      },
+      "rating": null,
+      "events": [],
+      "bonds": [],
+      "risk_reviews": {
+        "governance": null,
+        "tax_legal": null,
+        "payment": null
+      }
+    },
+    {
+      "name": "ООО Омега",
+      "inn": null,
+      "financials_as_of": null,
+      "financials_source_url": null,
+      "financials": {
+        "cash_unrestricted_rub": null,
+        "cash_restricted_escrow_rub": null,
+        "committed_undrawn_lines_rub": null,
+        "net_corporate_debt_rub": null,
+        "project_finance_debt_rub": null,
+        "ebitda_ltm_rub": null,
+        "interest_expense_ltm_rub": null,
+        "principal_due_12m_rub": null,
+        "cfo_ltm_rub": null,
+        "cfo_includes_cash_interest": null,
+        "cash_interest_due_12m_rub": null
+      },
+      "rating": null,
+      "events": [],
+      "bonds": [],
+      "risk_reviews": {
+        "governance": null,
+        "tax_legal": null,
+        "payment": null
+      }
+    }
+  ]
+}
